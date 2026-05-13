@@ -1,29 +1,24 @@
-import { Link } from 'expo-router';
-import { StyleSheet } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
+import { Platform, StyleSheet, Text, View } from 'react-native';
 
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-
-export default function ModalScreen() {
+export default function WorkoutModal() {
   return (
-    <ThemedView style={styles.container}>
-      <ThemedText type="title">This is a modal</ThemedText>
-      <Link href="/" dismissTo style={styles.link}>
-        <ThemedText type="link">Go to home screen</ThemedText>
-      </Link>
-    </ThemedView>
+    <View style={styles.container}>
+      <Text style={styles.title}>Active Workout</Text>
+      <View style={styles.separator} />
+      <Text>Workout tracking logic goes here.</Text>
+      <StatusBar style={Platform.OS === 'ios' ? 'light' : 'auto'} />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 20,
-  },
-  link: {
-    marginTop: 15,
-    paddingVertical: 15,
+  container: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  title: { fontSize: 20, fontWeight: 'bold' },
+  separator: {
+    marginVertical: 30,
+    height: 1,
+    width: '80%',
+    backgroundColor: '#eee',
   },
 });

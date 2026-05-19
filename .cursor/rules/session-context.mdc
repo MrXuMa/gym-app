@@ -1,0 +1,14 @@
+---
+description: Load project continuity from context/ at the start of each session
+alwaysApply: true
+---
+
+# Session context
+
+At the start of every conversation on this project:
+
+1. Read the **most recent** markdown file in `context/` (files are named `YYYY-MM-DD.md`; use the latest date).
+2. Treat that file as the source of truth for project state, architecture, constraints, and immediate next steps unless the user says otherwise.
+3. When a session ends with meaningful progress, add or update a dated file in `context/` so the next session can continue without re-discovery.
+
+Do not skip reading `context/` when the user asks to continue work, fix bugs, or plan features.

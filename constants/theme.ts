@@ -1,53 +1,67 @@
-/**
- * Below are the colors that are used in the app. The colors are defined in the light and dark mode.
- * There are many other ways to style your app. For example, [Nativewind](https://www.nativewind.dev/), [Tamagui](https://tamagui.dev/), [unistyles](https://reactnativeunistyles.vercel.app), etc.
- */
-
-import { Platform } from 'react-native';
-
-const tintColorLight = '#0a7ea4';
-const tintColorDark = '#fff';
-
-export const Colors = {
-  light: {
-    text: '#11181C',
-    background: '#fff',
-    tint: tintColorLight,
-    icon: '#687076',
-    tabIconDefault: '#687076',
-    tabIconSelected: tintColorLight,
+/** Classical architecture aesthetic: stone, shadow, proportion — not historical Rome. */
+export const homeTheme = {
+  colors: {
+    background: '#0a0a0a',
+    surface: '#161514',
+    surfaceBorder: 'rgba(245, 245, 240, 0.14)',
+    travertine: '#e8e4dc',
+    textPrimary: '#f5f5f0',
+    textMuted: '#a8a29e',
+    accent: '#b8956b',
+    bronze: '#8c7355',
+    danger: '#b91c1c',
+    footerBar: '#0f0f0f',
+    buttonText: '#0a0a0a',
+    navYellow: '#FACC15',
+    tabBar: '#000000',
+    tabInactive: '#737373',
+    tabActive: '#FFFFFF',
   },
-  dark: {
-    text: '#ECEDEE',
-    background: '#151718',
-    tint: tintColorDark,
-    icon: '#9BA1A6',
-    tabIconDefault: '#9BA1A6',
-    tabIconSelected: tintColorDark,
+  spacing: {
+    screen: 20,
+    cardGap: 14,
+    footerHeight: 128,
   },
-};
-
-export const Fonts = Platform.select({
-  ios: {
-    /** iOS `UIFontDescriptorSystemDesignDefault` */
-    sans: 'system-ui',
-    /** iOS `UIFontDescriptorSystemDesignSerif` */
-    serif: 'ui-serif',
-    /** iOS `UIFontDescriptorSystemDesignRounded` */
-    rounded: 'ui-rounded',
-    /** iOS `UIFontDescriptorSystemDesignMonospaced` */
-    mono: 'ui-monospace',
+  typography: {
+    greeting: {
+      fontSize: 28,
+      fontWeight: '600' as const,
+      letterSpacing: 0.5,
+    },
+    tagline: {
+      fontSize: 14,
+      fontWeight: '400' as const,
+      letterSpacing: 0.25,
+    },
+    widgetTitle: {
+      fontSize: 11,
+      fontWeight: '600' as const,
+      letterSpacing: 2,
+      textTransform: 'uppercase' as const,
+    },
+    widgetValue: {
+      fontSize: 32,
+      fontWeight: '700' as const,
+    },
+    widgetSubtext: {
+      fontSize: 13,
+      fontWeight: '400' as const,
+    },
   },
-  default: {
-    sans: 'normal',
-    serif: 'serif',
-    rounded: 'normal',
-    mono: 'monospace',
+  radius: {
+    card: 4,
+    button: 4,
   },
-  web: {
-    sans: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
-    serif: "Georgia, 'Times New Roman', serif",
-    rounded: "'SF Pro Rounded', 'Hiragino Maru Gothic ProN', Meiryo, 'MS PGothic', sans-serif",
-    mono: "SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
+  home: {
+    watermarkOpacity: 0.14,
   },
-});
+  auth: {
+    /** Pure black — matches the image negative space and removes seam on web */
+    overlaySolid: '#000000',
+    /** Solid black over the form; fades out above the statue */
+    overlayGradient: ['#000000', '#000000', 'rgba(0, 0, 0, 0.88)', 'rgba(0, 0, 0, 0)'] as const,
+    overlayLocations: [0, 0.36, 0.58, 0.78] as const,
+    cardBackground: 'rgba(0, 0, 0, 0.82)',
+    fieldBackground: '#000000',
+  },
+} as const;

@@ -30,8 +30,13 @@ yarn-error.*
 .DS_Store
 *.pem
 
-# local env files
+# local env files (never commit secrets)
+.env
+.env.*
 .env*.local
+
+# session continuity notes (local agent context)
+context/
 
 # typescript
 *.tsbuildinfo
@@ -41,5 +46,3 @@ app-example
 # generated native folders
 /ios
 /android
-
-.env

@@ -37,6 +37,8 @@ yarn-error.*
 
 # session continuity notes (local agent context)
 context/
+.cursor/
+supabase/
 
 # typescript
 *.tsbuildinfo

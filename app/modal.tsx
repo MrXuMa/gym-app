@@ -1,7 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { fetchExerciseCatalog } from '@/lib/exercises';
+import { useScrollToDockedCard } from '@/hooks/useScrollToDockedCard';
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -10,10 +14,17 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { AppScreen } from '@/components/layout/AppScreen';
-import { useOpenSwipeable } from '@/hooks/useOpenSwipeable';
 import { AddExercisePicker, type ExerciseOption } from '@/components/workout-session/AddExercisePicker';
 import { ExerciseSessionCard } from '@/components/workout-session/ExerciseSessionCard';
-import { loadWorkoutSession, removeExerciseFromSession, type SessionExercise, type WorkoutSetLog } from '@/lib/workoutSession';
+import { SetEditorDock } from '@/components/workout-session/SetEditorDock';
+import { useDockedSetEditor } from '@/hooks/useDockedSetEditor';
+import {
+  addExerciseToActiveSession,
+  loadWorkoutSession,
+  removeExerciseFromSession,
+  type SessionExercise,
+  type WorkoutSetLog,
+} from '@/lib/workoutSession';
 import { formatWorkoutDateText, formatWorkoutDurationText } from '@/lib/workoutDisplay';
 import { deleteWorkout } from '@/lib/workouts';
 import { supabase } from '@/lib/supabase';
@@ -31,7 +42,18 @@ export default function EditWorkoutScreen() {
   const [deleting, setDeleting] = useState(false);
   const [removingExerciseId, setRemovingExerciseId] = useState<string | null>(null);
   const [pickerVisible, setPickerVisible] = useState(false);
-  const { close: closeOpenSwipe, onWillOpen: handleSwipeableWillOpen } = useOpenSwipeable();
+  const scrollRef = useRef<ScrollView>(null);
+  const cardOffsetsRef = useRef<Record<string, number>>({});
+  const {
+    editingExerciseId,
+    setEditingExerciseId,
+    dockedEditor,
+    dockedExerciseId,
+    handleDockedEditorChange,
+    dockEditorActions,
+  } = useDockedSetEditor();
+
+  useScrollToDockedCard(scrollRef, cardOffsetsRef, dockedExerciseId);
 
   const loadWorkout = useCallback(async () => {
     if (!workoutId) {
@@ -42,10 +64,10 @@ export default function EditWorkoutScreen() {
     setLoading(true);
 
     try {
-      const [sessionResult, workoutMeta, exercisesResult] = await Promise.all([
-        loadWorkoutSession(workoutId, { useActiveCache: false }),
+      const [sessionResult, workoutMeta, catalog] = await Promise.all([
+        loadWorkoutSession(workoutId),
         supabase.from('user_workouts').select('duration_seconds, status, date').eq('id', workoutId).single(),
-        supabase.from('exercises').select('id, name, target_muscle').order('name'),
+        fetchExerciseCatalog(),
       ]);
 
       if (workoutMeta.error) {
@@ -63,21 +85,11 @@ export default function EditWorkoutScreen() {
         return;
       }
 
-      if (exercisesResult.error) {
-        throw exercisesResult.error;
-      }
-
       setExercises(sessionResult.exercises);
       setWorkoutTitle(sessionResult.title);
       setWorkoutDate(workoutMeta.data.date);
       setDurationSeconds(workoutMeta.data.duration_seconds);
-      setAllExercises(
-        (exercisesResult.data ?? []).map((exercise) => ({
-          id: exercise.id,
-          name: exercise.name,
-          targetMuscle: exercise.target_muscle,
-        })),
-      );
+      setAllExercises(catalog);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Could not load workout.';
       Alert.alert('Could not load workout', message);
@@ -96,27 +108,37 @@ export default function EditWorkoutScreen() {
     );
   }
 
-  function handleAddExercise(exerciseId: string) {
+  async function handleAddExercise(exerciseId: string) {
+    if (!workoutId) {
+      return;
+    }
+
     const selected = allExercises.find((exercise) => exercise.id === exerciseId);
     if (!selected) {
       return;
     }
 
-    setExercises((current) => {
-      if (current.some((exercise) => exercise.id === exerciseId)) {
-        return current;
-      }
+    try {
+      await addExerciseToActiveSession(workoutId, exerciseId);
+      setExercises((current) => {
+        if (current.some((exercise) => exercise.id === exerciseId)) {
+          return current;
+        }
 
-      return [
-        ...current,
-        {
-          id: selected.id,
-          name: selected.name,
-          targetMuscle: selected.targetMuscle,
-          sets: [],
-        },
-      ];
-    });
+        return [
+          ...current,
+          {
+            id: selected.id,
+            name: selected.name,
+            targetMuscle: selected.targetMuscle,
+            sets: [],
+          },
+        ];
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not add workout.';
+      Alert.alert('Could not add workout', message);
+    }
   }
 
   async function handleRemoveExercise(exerciseId: string) {
@@ -197,7 +219,11 @@ export default function EditWorkoutScreen() {
         </Pressable>
       }
     >
-      <View style={styles.body}>
+      <KeyboardAvoidingView
+        style={styles.body}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 4 : 0}
+      >
         <View style={styles.meta}>
           <Text style={styles.metaTitle} numberOfLines={2}>
             {workoutTitle}
@@ -208,26 +234,34 @@ export default function EditWorkoutScreen() {
         </View>
 
         <ScrollView
+          ref={scrollRef}
           style={styles.scrollView}
-          contentContainerStyle={styles.scroll}
+          contentContainerStyle={[styles.scroll, dockedEditor && styles.scrollWithDock]}
           showsVerticalScrollIndicator={false}
           keyboardDismissMode="on-drag"
           keyboardShouldPersistTaps="handled"
-          onScrollBeginDrag={closeOpenSwipe}
         >
           {exercises.length === 0 ? (
             <Text style={styles.emptyExercises}>Add a workout block to log or fix sets.</Text>
           ) : (
             exercises.map((exercise) => (
-              <ExerciseSessionCard
+              <View
                 key={exercise.id}
-                workoutId={workoutId}
-                exercise={exercise}
-                removing={removingExerciseId === exercise.id}
-                onSetsChange={handleSetsChange}
-                onRemove={() => handleRemoveExercise(exercise.id)}
-                onSwipeableWillOpen={handleSwipeableWillOpen}
-              />
+                onLayout={(event) => {
+                  cardOffsetsRef.current[exercise.id] = event.nativeEvent.layout.y;
+                }}
+              >
+                <ExerciseSessionCard
+                  workoutId={workoutId}
+                  exercise={exercise}
+                  editingExerciseId={editingExerciseId}
+                  onEditingExerciseIdChange={setEditingExerciseId}
+                  onDockedEditorChange={(payload) => handleDockedEditorChange(exercise.id, payload)}
+                  removing={removingExerciseId === exercise.id}
+                  onSetsChange={handleSetsChange}
+                  onRemove={() => handleRemoveExercise(exercise.id)}
+                />
+              </View>
             ))
           )}
 
@@ -235,6 +269,8 @@ export default function EditWorkoutScreen() {
             <Text style={styles.addWorkoutText}>Add workout</Text>
           </Pressable>
         </ScrollView>
+
+        {dockedEditor ? <SetEditorDock {...dockedEditor} {...dockEditorActions} /> : null}
 
         <View style={styles.footer}>
           <Pressable
@@ -251,7 +287,7 @@ export default function EditWorkoutScreen() {
             )}
           </Pressable>
         </View>
-      </View>
+      </KeyboardAvoidingView>
 
       <AddExercisePicker
         visible={pickerVisible}
@@ -278,8 +314,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     borderRadius: homeTheme.radius.card,
     borderWidth: 1,
-    borderColor: homeTheme.colors.surfaceBorder,
-    backgroundColor: homeTheme.colors.surface,
+    borderColor: homeTheme.colors.border,
+    backgroundColor: homeTheme.colors.card,
   },
   metaTitle: {
     color: homeTheme.colors.textPrimary,
@@ -299,6 +335,9 @@ const styles = StyleSheet.create({
   scroll: {
     paddingHorizontal: homeTheme.spacing.screen,
     paddingBottom: 16,
+  },
+  scrollWithDock: {
+    paddingBottom: 8,
   },
   emptyExercises: {
     color: homeTheme.colors.textMuted,

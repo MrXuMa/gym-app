@@ -139,9 +139,9 @@ const styles = StyleSheet.create({
     zIndex: 60,
   },
   age: {
-    color: homeTheme.colors.textMuted,
+    color: homeTheme.colors.mutedForeground,
     fontSize: 12,
-    fontWeight: '700',
+    fontWeight: '600',
     alignSelf: 'center',
     minWidth: 42,
     textAlign: 'right',

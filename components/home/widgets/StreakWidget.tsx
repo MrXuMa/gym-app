@@ -6,11 +6,12 @@ import { WidgetCard } from '@/components/home/WidgetCard';
 
 type StreakWidgetProps = {
   size?: WidgetSize;
+  minimal?: boolean;
   streakDays: number;
 };
 
-export function StreakWidget({ size = 'compact', streakDays }: StreakWidgetProps) {
-  const sizing = getWidgetSizing(size);
+export function StreakWidget({ size = 'compact', minimal = false, streakDays }: StreakWidgetProps) {
+  const sizing = getWidgetSizing(size, minimal);
   const subtext =
     streakDays === 0
       ? 'Log a workout to begin your streak.'
@@ -19,20 +20,24 @@ export function StreakWidget({ size = 'compact', streakDays }: StreakWidgetProps
         : `${streakDays} consecutive days logged.`;
 
   return (
-    <WidgetCard title="Streak" size={size}>
+    <WidgetCard title="Streak" size={size} minimal={minimal}>
       <View style={styles.row}>
         <View style={styles.valueBlock}>
           <Text style={[styles.value, { fontSize: sizing.valueFontSize }]}>{streakDays}</Text>
           <Text style={[styles.unit, { fontSize: sizing.unitFontSize }]}>days</Text>
         </View>
-        <Ionicons name="library-outline" size={sizing.iconSize} color={homeTheme.colors.accent} />
+        {sizing.showIcon ? (
+          <Ionicons name="library-outline" size={sizing.iconSize} color={homeTheme.colors.primary} />
+        ) : null}
       </View>
-      <Text
-        style={[styles.subtext, { fontSize: sizing.subtextFontSize, lineHeight: sizing.subtextLineHeight }]}
-        numberOfLines={size === 'large' ? undefined : 3}
-      >
-        {subtext}
-      </Text>
+      {sizing.showSubtext ? (
+        <Text
+          style={[styles.subtext, { fontSize: sizing.subtextFontSize, lineHeight: sizing.subtextLineHeight }]}
+          numberOfLines={size === 'large' ? undefined : 3}
+        >
+          {subtext}
+        </Text>
+      ) : null}
     </WidgetCard>
   );
 }
@@ -45,18 +50,20 @@ const styles = StyleSheet.create({
   },
   valueBlock: {
     flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: 8,
+    alignItems: 'baseline',
+    gap: 4,
   },
   value: {
-    color: homeTheme.colors.textPrimary,
+    color: homeTheme.colors.foreground,
     fontWeight: '700',
+    letterSpacing: -0.3,
   },
   unit: {
-    color: homeTheme.colors.textMuted,
-    marginBottom: 4,
+    color: homeTheme.colors.mutedForeground,
+    fontWeight: '500',
   },
   subtext: {
-    color: homeTheme.colors.textMuted,
+    color: homeTheme.colors.mutedForeground,
+    marginTop: 6,
   },
 });

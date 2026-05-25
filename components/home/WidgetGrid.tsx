@@ -9,15 +9,12 @@ import { PredictedMaxWidget } from '@/components/home/widgets/PredictedMaxWidget
 import { WeightTrendWidget } from '@/components/home/widgets/WeightTrendWidget';
 import { WeekSummaryWidget } from '@/components/home/widgets/WeekSummaryWidget';
 
-export type WidgetGridLayout = 'home' | 'metrics';
-
 type WidgetGridProps = {
   metrics: HomeMetrics;
-  layout?: WidgetGridLayout;
+  onEditPredictedMax?: () => void;
 };
 
 const HOME_COLUMNS = 2;
-const METRICS_COLUMNS = 1;
 
 function chunkWidgets(widgets: ReactElement[], columns: number) {
   const rows: ReactElement[][] = [];
@@ -29,35 +26,40 @@ function chunkWidgets(widgets: ReactElement[], columns: number) {
   return rows;
 }
 
-export function WidgetGrid({ metrics, layout = 'home' }: WidgetGridProps) {
+export function WidgetGrid({ metrics, onEditPredictedMax }: WidgetGridProps) {
   const router = useRouter();
-  const isMetricsLayout = layout === 'metrics';
-  const columns = isMetricsLayout ? METRICS_COLUMNS : HOME_COLUMNS;
-  const widgetSize: WidgetSize = isMetricsLayout ? 'large' : 'compact';
+  const widgetSize: WidgetSize = 'compact';
+  const minimal = true;
 
   const widgets: ReactElement[] = [
-    <StreakWidget key="streak" size={widgetSize} streakDays={metrics.streakDays} />,
+    <StreakWidget key="streak" size={widgetSize} minimal={minimal} streakDays={metrics.streakDays} />,
     <PredictedMaxWidget
       key="predicted-max"
       size={widgetSize}
+      minimal={minimal}
       liftName={metrics.predictedLiftName}
       predictedMax={metrics.predictedMax}
+      onEdit={onEditPredictedMax}
     />,
     <WeightTrendWidget
       key="weight"
       size={widgetSize}
+      minimal={minimal}
       currentWeight={metrics.currentWeight}
       trendLabel={metrics.weightTrendLabel}
+      changeLbs={metrics.weightChangeLbs}
+      spanDays={metrics.weightTrendSpanDays}
     />,
     <WeekSummaryWidget
       key="week"
       size={widgetSize}
+      minimal={minimal}
       workoutsThisWeek={metrics.workoutsThisWeek}
       onPress={() => router.push('/workouts')}
     />,
   ];
 
-  const rows = chunkWidgets(widgets, columns);
+  const rows = chunkWidgets(widgets, HOME_COLUMNS);
 
   return (
     <View style={styles.grid}>
@@ -66,12 +68,12 @@ export function WidgetGrid({ metrics, layout = 'home' }: WidgetGridProps) {
           {row.map((widget, columnIndex) => (
             <View
               key={`cell-${rowIndex}-${columnIndex}`}
-              style={isMetricsLayout ? styles.metricsCell : styles.homeCell}
+              style={styles.homeCell}
             >
               {widget}
             </View>
           ))}
-          {!isMetricsLayout && row.length < columns ? (
+          {row.length < HOME_COLUMNS ? (
             <View style={[styles.homeCell, styles.cellSpacer]} />
           ) : null}
         </View>
@@ -82,18 +84,16 @@ export function WidgetGrid({ metrics, layout = 'home' }: WidgetGridProps) {
 
 const styles = StyleSheet.create({
   grid: {
-    gap: homeTheme.spacing.cardGap,
+    gap: 10,
   },
   row: {
     flexDirection: 'row',
-    gap: homeTheme.spacing.cardGap,
+    alignItems: 'stretch',
+    gap: 10,
   },
   homeCell: {
     flex: 1,
-    aspectRatio: 1,
-  },
-  metricsCell: {
-    width: '100%',
+    alignSelf: 'stretch',
   },
   cellSpacer: {
     opacity: 0,

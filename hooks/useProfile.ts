@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useFocusEffect } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 
 type Profile = {
@@ -9,6 +10,7 @@ type Profile = {
   age: number | null;
   weight: number;
   height: number;
+  goals: string[];
 };
 
 export function useProfile() {
@@ -24,16 +26,31 @@ export function useProfile() {
 
     const { data } = await supabase
       .from('profiles_with_age')
-      .select('username, first_name, last_name, email, age, weight, height')
+      .select('username, first_name, last_name, email, age, weight, height, goals')
       .eq('id', userResult.user.id)
       .maybeSingle();
 
-    setProfile(data);
+    setProfile(
+      data
+        ? {
+            ...data,
+            goals: Array.isArray(data.goals) ? data.goals.filter(Boolean) : [],
+          }
+        : null,
+    );
   }, []);
 
   useEffect(() => {
     load().finally(() => setLoading(false));
   }, [load]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!loading) {
+        void load();
+      }
+    }, [load, loading]),
+  );
 
   const displayName = profile
     ? [profile.first_name, profile.last_name].filter(Boolean).join(' ') || profile.username

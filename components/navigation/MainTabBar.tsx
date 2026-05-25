@@ -4,9 +4,7 @@ import { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { NameWorkoutModal } from '@/components/workout-session/NameWorkoutModal';
 import { getActiveWorkoutSession } from '@/lib/workoutSession';
-import { createWorkoutSession } from '@/lib/workouts';
 import { homeTheme } from '@/constants/theme';
 
 type TabItem = {
@@ -16,7 +14,7 @@ type TabItem = {
 };
 
 const LEFT_TABS: TabItem[] = [
-  { routeName: 'metrics', label: 'Metrics', icon: 'stats-chart-outline' },
+  { routeName: 'coach', label: 'Coach', icon: 'sparkles-outline' },
   { routeName: 'workouts', label: 'Workouts', icon: 'barbell-outline' },
 ];
 
@@ -35,33 +33,18 @@ export function MainTabBar({ state, navigation }: BottomTabBarProps) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [starting, setStarting] = useState(false);
-  const [nameModalVisible, setNameModalVisible] = useState(false);
 
   async function handleStartWorkout() {
+    setStarting(true);
+
     try {
       const active = await getActiveWorkoutSession();
       if (active) {
-        setStarting(true);
         router.push({ pathname: '/workout-session', params: { workoutId: active.id } });
         return;
       }
 
-      setNameModalVisible(true);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Could not start workout.';
-      Alert.alert('Could not start workout', message);
-    } finally {
-      setStarting(false);
-    }
-  }
-
-  async function handleConfirmWorkoutName(title: string) {
-    setStarting(true);
-
-    try {
-      const workoutId = await createWorkoutSession(title);
-      setNameModalVisible(false);
-      router.push({ pathname: '/workout-session', params: { workoutId } });
+      router.push('/start-workout' as never);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Could not start workout.';
       Alert.alert('Could not start workout', message);
@@ -132,21 +115,14 @@ export function MainTabBar({ state, navigation }: BottomTabBarProps) {
             accessibilityRole="button"
             accessibilityLabel="Start workout"
           >
-            {starting && !nameModalVisible ? (
-              <ActivityIndicator color={homeTheme.colors.tabBar} />
+            {starting ? (
+              <ActivityIndicator color={homeTheme.colors.primaryForeground} />
             ) : (
               <Text style={styles.startWorkoutLabel}>Start Workout</Text>
             )}
           </Pressable>
         </View>
       </View>
-
-      <NameWorkoutModal
-        visible={nameModalVisible}
-        submitting={starting}
-        onCancel={() => setNameModalVisible(false)}
-        onConfirm={handleConfirmWorkoutName}
-      />
     </>
   );
 }
@@ -173,7 +149,7 @@ const styles = StyleSheet.create({
   bar: {
     backgroundColor: homeTheme.colors.tabBar,
     borderTopWidth: 1,
-    borderTopColor: homeTheme.colors.surfaceBorder,
+    borderTopColor: homeTheme.colors.border,
     paddingTop: 8,
   },
   tabRow: {
@@ -202,8 +178,8 @@ const styles = StyleSheet.create({
   startWorkoutButton: {
     width: '100%',
     minHeight: 52,
-    backgroundColor: homeTheme.colors.navYellow,
-    borderRadius: 14,
+    backgroundColor: homeTheme.colors.primary,
+    borderRadius: homeTheme.radius.button,
     paddingVertical: 14,
     paddingHorizontal: 20,
     alignItems: 'center',
@@ -213,7 +189,7 @@ const styles = StyleSheet.create({
     opacity: 0.7,
   },
   startWorkoutLabel: {
-    color: homeTheme.colors.tabBar,
+    color: homeTheme.colors.primaryForeground,
     fontSize: 14,
     fontWeight: '800',
     letterSpacing: 0.75,

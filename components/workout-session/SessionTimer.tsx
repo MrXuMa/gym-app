@@ -51,8 +51,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     borderRadius: homeTheme.radius.card,
     borderWidth: 1,
-    borderColor: homeTheme.colors.surfaceBorder,
-    backgroundColor: homeTheme.colors.surface,
+    borderColor: homeTheme.colors.border,
+    backgroundColor: homeTheme.colors.card,
   },
   workoutTitle: {
     color: homeTheme.colors.textPrimary,

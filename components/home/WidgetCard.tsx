@@ -1,75 +1,67 @@
 import { ReactNode } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import type { WidgetSize } from '@/components/home/widgetSizing';
+import { Card } from '@/components/ui/card';
 import { homeTheme } from '@/constants/theme';
 
 type WidgetCardProps = {
   title: string;
   size?: WidgetSize;
+  minimal?: boolean;
   children: ReactNode;
 };
 
-export function WidgetCard({ title, size = 'compact', children }: WidgetCardProps) {
+export function WidgetCard({ title, size = 'compact', minimal = false, children }: WidgetCardProps) {
   const isLarge = size === 'large';
 
   return (
-    <View style={[styles.card, isLarge && styles.cardLarge]}>
-      <View style={styles.entablature}>
-        <View style={styles.frieze} />
-        <View style={styles.architrave} />
-      </View>
-      <Text style={[styles.title, isLarge && styles.titleLarge]} numberOfLines={1}>
+    <Card style={[styles.card, minimal && styles.cardMinimal, isLarge && styles.cardLarge]}>
+      <Text style={[styles.title, minimal && styles.titleMinimal, isLarge && styles.titleLarge]} numberOfLines={1}>
         {title}
       </Text>
-      <View style={styles.body}>{children}</View>
-    </View>
+      <View style={[styles.body, minimal && styles.bodyMinimal]}>{children}</View>
+    </Card>
   );
 }
 
 const styles = StyleSheet.create({
   card: {
     flex: 1,
-    backgroundColor: homeTheme.colors.surface,
-    borderRadius: homeTheme.radius.card,
-    borderWidth: 1,
-    borderColor: homeTheme.colors.surfaceBorder,
-    padding: 12,
-    paddingTop: 10,
-    overflow: 'hidden',
+    padding: 14,
+    paddingTop: 12,
+  },
+  cardMinimal: {
+    padding: 10,
+    paddingTop: 9,
+    borderColor: 'rgba(64, 64, 64, 0.6)',
   },
   cardLarge: {
     padding: 18,
     paddingTop: 14,
     minHeight: 148,
   },
-  entablature: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    gap: 2,
-  },
-  frieze: {
-    height: 2,
-    backgroundColor: homeTheme.colors.travertine,
-    opacity: 0.35,
-  },
-  architrave: {
-    height: 1,
-    backgroundColor: homeTheme.colors.surfaceBorder,
-  },
   title: {
-    color: homeTheme.colors.textMuted,
-    marginTop: 4,
-    marginBottom: 8,
+    color: homeTheme.colors.mutedForeground,
+    marginBottom: 10,
     ...homeTheme.typography.widgetTitle,
   },
+  titleMinimal: {
+    fontSize: 10,
+    fontWeight: '500',
+    letterSpacing: 0.2,
+    textTransform: 'none',
+    marginBottom: 6,
+  },
   titleLarge: {
-    marginTop: 6,
     marginBottom: 12,
   },
   body: {
     flex: 1,
     justifyContent: 'space-between',
+  },
+  bodyMinimal: {
+    flex: 0,
+    justifyContent: 'flex-start',
+    gap: 2,
   },
 });

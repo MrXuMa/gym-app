@@ -4,12 +4,14 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { AppHeader } from '@/components/navigation/AppHeader';
 import { ProfileHeaderButton } from '@/components/navigation/ProfileHeaderButton';
+import { ScreenCrossWatermark } from '@/components/layout/ScreenCrossWatermark';
 import { homeTheme } from '@/constants/theme';
 
 type AppScreenProps = {
   children: ReactNode;
   title?: string;
   showProfile?: boolean;
+  showCrossWatermark?: boolean;
   headerLeft?: React.ReactNode;
   headerRight?: React.ReactNode;
   edges?: ('top' | 'bottom')[];
@@ -19,6 +21,7 @@ export function AppScreen({
   children,
   title,
   showProfile = true,
+  showCrossWatermark = false,
   headerLeft,
   headerRight,
   edges = ['top'],
@@ -30,7 +33,10 @@ export function AppScreen({
     <SafeAreaView style={styles.safe} edges={edges}>
       <StatusBar style="light" />
       <AppHeader title={title} leftSlot={headerLeft} rightSlot={rightSlot} />
-      <View style={styles.content}>{children}</View>
+      <View style={styles.content}>
+        {showCrossWatermark ? <ScreenCrossWatermark /> : null}
+        {children}
+      </View>
     </SafeAreaView>
   );
 }
@@ -42,6 +48,7 @@ const styles = StyleSheet.create({
   },
   content: {
     flex: 1,
+    position: 'relative',
   },
   headerSpacer: {
     width: 36,

@@ -1,4 +1,10 @@
 import { supabase } from '@/lib/supabase';
+import {
+  summarizeWeightLogs,
+  weightTrendToLabel,
+  WEIGHT_TREND_WINDOW_DAYS,
+  type WeightTrendLabel,
+} from '@/lib/weightTrend';
 
 const BENCH_EXERCISE_PATTERN = /bench/i;
 
@@ -27,35 +33,29 @@ function epleyOneRepMax(weight: number, reps: number) {
   return Math.round(weight * (1 + reps / 30));
 }
 
+/**
+ * Strict-today streak: returns the number of consecutive days (including today)
+ * the user has logged a workout. If there is no workout dated today, the streak
+ * is 0 — historical sequences without a tail at today do not count.
+ *
+ * Mirrors vm/coach-worker/contextMerge.js#computeStreak so the home widget and
+ * coach context never disagree.
+ */
 function computeStreak(workoutDates: string[]) {
   if (workoutDates.length === 0) {
     return 0;
   }
 
   const dayKeys = new Set(workoutDates.map(toDateKey));
-  const sortedKeys = [...dayKeys].sort((a, b) => {
-    const [ay, am, ad] = a.split('-').map(Number);
-    const [by, bm, bd] = b.split('-').map(Number);
-    return new Date(by, bm, bd).getTime() - new Date(ay, am, ad).getTime();
-  });
-
-  const mostRecent = sortedKeys[0];
-  const [y, m, d] = mostRecent.split('-').map(Number);
-  let cursor = new Date(y, m, d);
-  cursor.setHours(0, 0, 0, 0);
-
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  const yesterday = new Date(today);
-  yesterday.setDate(yesterday.getDate() - 1);
-
-  if (cursor.getTime() < yesterday.getTime()) {
+  if (!dayKeys.has(toDateKey(today.toISOString()))) {
     return 0;
   }
 
   let streak = 0;
-
+  const cursor = new Date(today);
   while (dayKeys.has(toDateKey(cursor.toISOString()))) {
     streak += 1;
     cursor.setDate(cursor.getDate() - 1);
@@ -68,19 +68,31 @@ export type HomeMetrics = {
   streakDays: number;
   workoutsThisWeek: number;
   currentWeight: number | null;
-  weightTrendLabel: 'Gain' | 'Lose' | 'Maintain' | '—';
+  weightTrendLabel: WeightTrendLabel;
+  weightChangeLbs: number | null;
+  weightTrendSpanDays: number | null;
   predictedMax: number | null;
   predictedLiftName: string;
+  predictedLiftExerciseId: string | null;
 };
 
-export async function fetchHomeMetrics(): Promise<HomeMetrics> {
+export type FetchHomeMetricsOptions = {
+  predictedMaxExerciseId?: string | null;
+};
+
+export async function fetchHomeMetrics(
+  options: FetchHomeMetricsOptions = {},
+): Promise<HomeMetrics> {
   const defaultMetrics: HomeMetrics = {
     streakDays: 0,
     workoutsThisWeek: 0,
     currentWeight: null,
     weightTrendLabel: '—',
+    weightChangeLbs: null,
+    weightTrendSpanDays: null,
     predictedMax: null,
     predictedLiftName: 'Bench Press',
+    predictedLiftExerciseId: null,
   };
 
   const { data: userResult, error: userError } = await supabase.auth.getUser();
@@ -90,8 +102,10 @@ export async function fetchHomeMetrics(): Promise<HomeMetrics> {
 
   const userId = userResult.user.id;
   const weekStart = startOfWeek(new Date());
+  const weightCutoff = new Date();
+  weightCutoff.setDate(weightCutoff.getDate() - WEIGHT_TREND_WINDOW_DAYS);
 
-  const [profileResult, workoutsResult, exercisesResult] = await Promise.all([
+  const [profileResult, workoutsResult, exercisesResult, weightLogsResult] = await Promise.all([
     supabase.from('profiles_with_age').select('weight').eq('id', userId).maybeSingle(),
     supabase
       .from('user_workouts')
@@ -99,6 +113,11 @@ export async function fetchHomeMetrics(): Promise<HomeMetrics> {
       .eq('status', 'completed')
       .order('date', { ascending: false }),
     supabase.from('exercises').select('id, name'),
+    supabase
+      .from('body_weight_logs')
+      .select('weight, recorded_at')
+      .gte('recorded_at', weightCutoff.toISOString())
+      .order('recorded_at', { ascending: true }),
   ]);
 
   const workoutDates = (workoutsResult.data ?? [])
@@ -110,20 +129,23 @@ export async function fetchHomeMetrics(): Promise<HomeMetrics> {
 
   const currentWeight = profileResult.data?.weight ?? null;
 
+  const exercises = exercisesResult.data ?? [];
+  const chosenId = options.predictedMaxExerciseId ?? null;
+
+  const targetExercise =
+    (chosenId ? exercises.find((exercise) => exercise.id === chosenId) : null) ??
+    exercises.find((exercise) => BENCH_EXERCISE_PATTERN.test(exercise.name)) ??
+    null;
+
   let predictedMax: number | null = null;
-  let predictedLiftName = 'Bench Press';
+  let predictedLiftName = targetExercise?.name ?? 'Bench Press';
+  const predictedLiftExerciseId = targetExercise?.id ?? null;
 
-  const benchExercise = (exercisesResult.data ?? []).find((exercise) =>
-    BENCH_EXERCISE_PATTERN.test(exercise.name),
-  );
-
-  if (benchExercise) {
-    predictedLiftName = benchExercise.name;
-
+  if (targetExercise) {
     const { data: logs } = await supabase
       .from('workout_logs')
       .select('weight, reps')
-      .eq('exercise_id', benchExercise.id)
+      .eq('exercise_id', targetExercise.id)
       .not('weight', 'is', null);
 
     let bestEstimate = 0;
@@ -142,12 +164,22 @@ export async function fetchHomeMetrics(): Promise<HomeMetrics> {
     predictedMax = bestEstimate > 0 ? bestEstimate : null;
   }
 
+  const weightSummary = summarizeWeightLogs(
+    (weightLogsResult.data ?? []).map((row) => ({
+      weight: Number(row.weight),
+      recordedAt: row.recorded_at,
+    })),
+  );
+
   return {
     streakDays,
     workoutsThisWeek,
-    currentWeight,
-    weightTrendLabel: '—',
+    currentWeight: weightSummary.latestLbs ?? currentWeight,
+    weightTrendLabel: weightTrendToLabel(weightSummary.trend),
+    weightChangeLbs: weightSummary.changeLbs,
+    weightTrendSpanDays: weightSummary.spanDays,
     predictedMax,
     predictedLiftName,
+    predictedLiftExerciseId,
   };
 }

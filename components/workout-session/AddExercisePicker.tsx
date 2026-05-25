@@ -10,12 +10,9 @@ import {
   View,
 } from 'react-native';
 import { homeTheme } from '@/constants/theme';
+import type { ExerciseCatalogItem } from '@/lib/exercises';
 
-export type ExerciseOption = {
-  id: string;
-  name: string;
-  targetMuscle: string | null;
-};
+export type ExerciseOption = ExerciseCatalogItem;
 
 type AddExercisePickerProps = {
   visible: boolean;
@@ -186,12 +183,12 @@ const styles = StyleSheet.create({
   search: {
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: homeTheme.colors.surfaceBorder,
+    borderColor: homeTheme.colors.border,
     borderRadius: homeTheme.radius.button,
     paddingHorizontal: 14,
     paddingVertical: 12,
     color: homeTheme.colors.textPrimary,
-    backgroundColor: homeTheme.colors.surface,
+    backgroundColor: homeTheme.colors.card,
     fontSize: 16,
   },
   filterScroll: {
@@ -207,12 +204,12 @@ const styles = StyleSheet.create({
   },
   filterChip: {
     borderWidth: 1,
-    borderColor: homeTheme.colors.surfaceBorder,
+    borderColor: homeTheme.colors.border,
     borderRadius: 999,
     paddingHorizontal: 16,
     height: FILTER_ROW_HEIGHT,
     justifyContent: 'center',
-    backgroundColor: homeTheme.colors.surface,
+    backgroundColor: homeTheme.colors.card,
   },
   filterChipActive: {
     backgroundColor: homeTheme.colors.navYellow,
@@ -240,7 +237,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: homeTheme.colors.surfaceBorder,
+    borderBottomColor: homeTheme.colors.border,
   },
   rowDisabled: {
     opacity: 0.55,

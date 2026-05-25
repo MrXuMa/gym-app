@@ -1,5 +1,6 @@
 import React from 'react';
-import { Platform, ScrollView, StyleProp, StyleSheet, Text, TextInput, TextStyle, TouchableOpacity, View, ViewStyle } from 'react-native';
+import { Platform, ScrollView, StyleProp, StyleSheet, Text, TextInput, TextStyle, Pressable, View, ViewStyle } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { authPlaceholderColor, authStyles } from './authStyles';
 import { homeTheme } from '@/constants/theme';
 import { PickerOption } from './pickerUtils';
@@ -22,14 +23,14 @@ type SearchablePickerProps = {
 
 const dropdownShadow = Platform.select({
   web: {
-    boxShadow: '0 12px 18px rgba(0, 0, 0, 0.28)',
+    boxShadow: '0 8px 20px rgba(0, 0, 0, 0.4)',
   },
   default: {
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.28,
-    shadowRadius: 18,
-    elevation: 12,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.4,
+    shadowRadius: 14,
+    elevation: 10,
   },
 });
 
@@ -61,25 +62,33 @@ export function SearchablePicker({
           keyboardType={keyboardType}
           style={[inputStyle, styles.input]}
         />
-        <Text style={styles.arrow}>v</Text>
+        <Ionicons
+          name={isOpen ? 'chevron-up' : 'chevron-down'}
+          size={16}
+          color={homeTheme.colors.mutedForeground}
+        />
       </View>
 
-      {isOpen && (
+      {isOpen ? (
         <View style={[styles.dropdown, dropdownStyle]}>
-          <ScrollView style={styles.dropdownList} nestedScrollEnabled>
+          <ScrollView style={styles.dropdownList} nestedScrollEnabled keyboardShouldPersistTaps="handled">
             {options.map((option) => (
-              <TouchableOpacity key={option.value} style={styles.option} onPress={() => onSelect(option)}>
+              <Pressable
+                key={option.value}
+                style={({ pressed }) => [styles.option, pressed && styles.optionPressed]}
+                onPress={() => onSelect(option)}
+              >
                 <Text style={styles.optionText}>{option.label}</Text>
-              </TouchableOpacity>
+              </Pressable>
             ))}
-            {options.length === 0 && (
+            {options.length === 0 ? (
               <View style={styles.option}>
-                <Text style={styles.optionText}>{noMatchText}</Text>
+                <Text style={styles.optionMuted}>{noMatchText}</Text>
               </View>
-            )}
+            ) : null}
           </ScrollView>
         </View>
-      )}
+      ) : null}
     </View>
   );
 }
@@ -92,30 +101,23 @@ const styles = StyleSheet.create({
   selectField: {
     marginBottom: 0,
     overflow: 'hidden',
-    paddingRight: 10,
+    paddingRight: 12,
   },
   input: {
     minWidth: 0,
     flexShrink: 1,
   },
-  arrow: {
-    width: 14,
-    color: homeTheme.colors.accent,
-    fontWeight: '700',
-    marginLeft: 6,
-    textAlign: 'center',
-  },
   dropdown: {
     position: 'absolute',
-    top: 56,
+    top: 52,
     left: 0,
     right: 0,
     zIndex: 70,
     maxHeight: 180,
-    borderRadius: homeTheme.radius.card,
+    borderRadius: homeTheme.radius.input,
     borderWidth: 1,
-    borderColor: homeTheme.colors.surfaceBorder,
-    backgroundColor: homeTheme.auth.cardBackground,
+    borderColor: homeTheme.colors.border,
+    backgroundColor: homeTheme.colors.card,
     overflow: 'hidden',
     ...dropdownShadow,
   },
@@ -123,13 +125,21 @@ const styles = StyleSheet.create({
     maxHeight: 180,
   },
   option: {
-    paddingVertical: 10,
-    paddingHorizontal: 16,
+    paddingVertical: 11,
+    paddingHorizontal: 14,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.08)',
+    borderBottomColor: homeTheme.colors.border,
+  },
+  optionPressed: {
+    backgroundColor: homeTheme.colors.muted,
   },
   optionText: {
-    color: homeTheme.colors.textPrimary,
-    fontWeight: '600',
+    color: homeTheme.colors.foreground,
+    fontSize: 15,
+    fontWeight: '500',
+  },
+  optionMuted: {
+    color: homeTheme.colors.mutedForeground,
+    fontSize: 14,
   },
 });

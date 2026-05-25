@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Pressable, Text, TextInput, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Session } from '@supabase/supabase-js';
 import { AuthCard } from '@/components/auth/AuthCard';
 import { AuthScreenLayout } from '@/components/auth/AuthScreenLayout';
 import { authPlaceholderColor, authStyles, webInputReset } from '@/components/auth/authStyles';
-import { homeTheme } from '@/constants/theme';
+import { Button } from '@/components/ui/button';
 import { getPasswordValidationError } from '../lib/passwordValidation';
 import { supabase } from '../lib/supabase';
 
@@ -82,8 +82,8 @@ export default function ResetPasswordScreen() {
   return (
     <AuthScreenLayout>
       <AuthCard>
-        <Text style={authStyles.header}>Reset Password</Text>
-        <Text style={[authStyles.statusMessage, { marginBottom: 18 }]}>{statusMessage}</Text>
+        <Text style={authStyles.header}>Reset password</Text>
+        <Text style={[authStyles.statusMessage, { marginBottom: 16 }]}>{statusMessage}</Text>
 
         <View style={authStyles.field}>
           <TextInput
@@ -123,7 +123,7 @@ export default function ResetPasswordScreen() {
           Use 8+ characters with uppercase, lowercase, a number, and a special character.
         </Text>
 
-        {errors.length > 0 && (
+        {errors.length > 0 ? (
           <View style={authStyles.errorBox}>
             {errors.map((error) => (
               <Text key={error} style={authStyles.errorText}>
@@ -131,23 +131,23 @@ export default function ResetPasswordScreen() {
               </Text>
             ))}
           </View>
-        )}
+        ) : null}
 
-        <TouchableOpacity
-          style={[authStyles.button, (loading || checkingSession || !session) && authStyles.disabled]}
-          disabled={loading || checkingSession || !session}
-          onPress={updatePassword}
-        >
-          {loading || checkingSession ? (
-            <ActivityIndicator color={homeTheme.colors.buttonText} />
-          ) : (
-            <Text style={authStyles.buttonText}>Update Password</Text>
-          )}
-        </TouchableOpacity>
+        <View style={authStyles.actions}>
+          <Button
+            label="Update password"
+            fullWidth
+            loading={loading || checkingSession}
+            disabled={checkingSession || !session}
+            onPress={updatePassword}
+          />
+        </View>
 
-        <TouchableOpacity style={authStyles.footerLink} onPress={() => router.replace('/login')}>
-          <Text style={authStyles.footerText}>Back to Login</Text>
-        </TouchableOpacity>
+        <Pressable style={authStyles.footerLink} onPress={() => router.replace('/login')}>
+          <Text style={authStyles.footerText}>
+            Back to <Text style={authStyles.footerTextHighlight}>Log in</Text>
+          </Text>
+        </Pressable>
       </AuthCard>
     </AuthScreenLayout>
   );

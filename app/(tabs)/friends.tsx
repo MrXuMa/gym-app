@@ -4,7 +4,7 @@ import { homeTheme } from '@/constants/theme';
 
 export default function FriendsScreen() {
   return (
-    <AppScreen title="Friends">
+    <AppScreen title="Friends" showCrossWatermark>
       <View style={styles.body}>
         <Text style={styles.title}>Friends</Text>
         <Text style={styles.bodyText}>

@@ -53,8 +53,11 @@ export default function RootLayout() {
       segments[0] === 'login' || segments[0] === 'reset-password';
     const isOnWorkoutSession = segments[0] === 'workout-session';
     const isOnEditWorkout = segments[0] === 'modal';
+    const rootSegment = segments[0] as string | undefined;
+    const isOnStartWorkout = rootSegment === 'start-workout';
+    const isOnTemplateEditor = rootSegment === 'workout-template';
 
-    if (isOnPublicAuthScreen || isOnWorkoutSession || isOnEditWorkout) {
+    if (isOnPublicAuthScreen || isOnWorkoutSession || isOnEditWorkout || isOnStartWorkout || isOnTemplateEditor) {
       redirectingToSession.current = false;
       return;
     }
@@ -100,6 +103,7 @@ export default function RootLayout() {
           <Stack.Screen name="reset-password" options={{ title: 'Reset Password' }} />
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="profile" />
+          <Stack.Screen name="goals" />
           <Stack.Screen name="exercises" />
           <Stack.Screen
             name="modal"
@@ -115,6 +119,22 @@ export default function RootLayout() {
               headerShown: false,
               gestureEnabled: false,
               animation: 'fade',
+            }}
+          />
+          <Stack.Screen
+            name="start-workout"
+            options={{
+              headerShown: false,
+              gestureEnabled: true,
+              animation: 'slide_from_right',
+            }}
+          />
+          <Stack.Screen
+            name="workout-template/editor"
+            options={{
+              headerShown: false,
+              gestureEnabled: true,
+              animation: 'slide_from_right',
             }}
           />
         </Stack>

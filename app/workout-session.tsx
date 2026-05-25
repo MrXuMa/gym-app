@@ -1,8 +1,12 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { fetchExerciseCatalog } from '@/lib/exercises';
+import { useScrollToDockedCard } from '@/hooks/useScrollToDockedCard';
 import {
   ActivityIndicator,
   Alert,
   BackHandler,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -11,10 +15,11 @@ import {
 } from 'react-native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { AppScreen } from '@/components/layout/AppScreen';
-import { useOpenSwipeable } from '@/hooks/useOpenSwipeable';
 import { AddExercisePicker, type ExerciseOption } from '@/components/workout-session/AddExercisePicker';
 import { ExerciseSessionCard } from '@/components/workout-session/ExerciseSessionCard';
 import { SessionTimer } from '@/components/workout-session/SessionTimer';
+import { SetEditorDock } from '@/components/workout-session/SetEditorDock';
+import { useDockedSetEditor } from '@/hooks/useDockedSetEditor';
 import {
   addExerciseToActiveSession,
   cancelActiveWorkoutSession,
@@ -25,7 +30,6 @@ import {
   type SessionExercise,
   type WorkoutSetLog,
 } from '@/lib/workoutSession';
-import { supabase } from '@/lib/supabase';
 import { homeTheme } from '@/constants/theme';
 
 export default function WorkoutSessionScreen() {
@@ -41,7 +45,18 @@ export default function WorkoutSessionScreen() {
   const [discarding, setDiscarding] = useState(false);
   const [removingExerciseId, setRemovingExerciseId] = useState<string | null>(null);
   const [pickerVisible, setPickerVisible] = useState(false);
-  const { close: closeOpenSwipe, onWillOpen: handleSwipeableWillOpen } = useOpenSwipeable();
+  const scrollRef = useRef<ScrollView>(null);
+  const cardOffsetsRef = useRef<Record<string, number>>({});
+  const {
+    editingExerciseId,
+    setEditingExerciseId,
+    dockedEditor,
+    dockedExerciseId,
+    handleDockedEditorChange,
+    dockEditorActions,
+  } = useDockedSetEditor();
+
+  useScrollToDockedCard(scrollRef, cardOffsetsRef, dockedExerciseId);
 
   useEffect(() => {
     async function bootstrap() {
@@ -60,26 +75,13 @@ export default function WorkoutSessionScreen() {
           return;
         }
 
-        const [sessionResult, exercisesResult] = await Promise.all([
-          loadWorkoutSession(id),
-          supabase.from('exercises').select('id, name, target_muscle').order('name'),
-        ]);
-
-        if (exercisesResult.error) {
-          throw exercisesResult.error;
-        }
+        const [sessionResult, catalog] = await Promise.all([loadWorkoutSession(id), fetchExerciseCatalog()]);
 
         setWorkoutId(sessionResult.workoutId);
         setWorkoutTitle(sessionResult.title);
         setStartedAt(sessionResult.startedAt);
         setExercises(sessionResult.exercises);
-        setAllExercises(
-          (exercisesResult.data ?? []).map((exercise) => ({
-            id: exercise.id,
-            name: exercise.name,
-            targetMuscle: exercise.target_muscle,
-          })),
-        );
+        setAllExercises(catalog);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Could not load workout session.';
         Alert.alert('Session error', message);
@@ -256,33 +258,47 @@ export default function WorkoutSessionScreen() {
         </Pressable>
       }
     >
-      <View style={styles.body}>
+      <KeyboardAvoidingView
+        style={styles.body}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 4 : 0}
+      >
         <SessionTimer title={workoutTitle} startedAt={startedAt} />
 
         <ScrollView
+          ref={scrollRef}
           style={styles.scrollView}
-          contentContainerStyle={styles.scroll}
+          contentContainerStyle={[styles.scroll, dockedEditor && styles.scrollWithDock]}
           showsVerticalScrollIndicator={false}
           keyboardDismissMode="on-drag"
           keyboardShouldPersistTaps="handled"
-          onScrollBeginDrag={closeOpenSwipe}
         >
           {exercises.length === 0 ? (
             <Text style={styles.emptyExercises}>Add a workout to start logging sets.</Text>
           ) : (
             exercises.map((exercise) => (
-              <ExerciseSessionCard
+              <View
                 key={exercise.id}
-                workoutId={workoutId}
-                exercise={exercise}
-                removing={removingExerciseId === exercise.id}
-                onSetsChange={handleSetsChange}
-                onRemove={() => handleRemoveExercise(exercise.id)}
-                onSwipeableWillOpen={handleSwipeableWillOpen}
-              />
+                onLayout={(event) => {
+                  cardOffsetsRef.current[exercise.id] = event.nativeEvent.layout.y;
+                }}
+              >
+                <ExerciseSessionCard
+                  workoutId={workoutId}
+                  exercise={exercise}
+                  editingExerciseId={editingExerciseId}
+                  onEditingExerciseIdChange={setEditingExerciseId}
+                  onDockedEditorChange={(payload) => handleDockedEditorChange(exercise.id, payload)}
+                  removing={removingExerciseId === exercise.id}
+                  onSetsChange={handleSetsChange}
+                  onRemove={() => handleRemoveExercise(exercise.id)}
+                />
+              </View>
             ))
           )}
         </ScrollView>
+
+        {dockedEditor ? <SetEditorDock {...dockedEditor} {...dockEditorActions} /> : null}
 
         <View style={styles.footer}>
           <Pressable style={styles.addWorkoutButton} onPress={() => setPickerVisible(true)}>
@@ -302,7 +318,7 @@ export default function WorkoutSessionScreen() {
             )}
           </Pressable>
         </View>
-      </View>
+      </KeyboardAvoidingView>
 
       <AddExercisePicker
         visible={pickerVisible}
@@ -328,6 +344,9 @@ const styles = StyleSheet.create({
   scroll: {
     paddingHorizontal: homeTheme.spacing.screen,
     paddingBottom: 24,
+  },
+  scrollWithDock: {
+    paddingBottom: 8,
   },
   footer: {
     paddingHorizontal: homeTheme.spacing.screen,

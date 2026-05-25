@@ -3,9 +3,8 @@ import { ActivityIndicator, Alert, FlatList, StyleSheet, Text } from 'react-nati
 import { useRouter } from 'expo-router';
 import { AppScreen } from '@/components/layout/AppScreen';
 import { useOpenSwipeable } from '@/hooks/useOpenSwipeable';
-import { WorkoutListRow, type WorkoutListItem } from '@/components/workouts/WorkoutListRow';
-import { deleteWorkout } from '@/lib/workouts';
-import { supabase } from '@/lib/supabase';
+import { WorkoutListRow } from '@/components/workouts/WorkoutListRow';
+import { deleteWorkout, fetchCompletedWorkouts, type WorkoutListItem } from '@/lib/workouts';
 import { homeTheme } from '@/constants/theme';
 
 export default function WorkoutsTabScreen() {
@@ -17,26 +16,15 @@ export default function WorkoutsTabScreen() {
 
   const loadWorkouts = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from('user_workouts')
-      .select('id, title, date, duration_seconds')
-      .eq('status', 'completed')
-      .order('date', { ascending: false });
-
-    if (error) {
-      Alert.alert('Could not load workouts', error.message);
-    } else {
-      setWorkouts(
-        (data ?? []).map((workout) => ({
-          id: workout.id,
-          title: workout.title,
-          date: workout.date,
-          durationSeconds: workout.duration_seconds,
-        })),
-      );
+    try {
+      const items = await fetchCompletedWorkouts();
+      setWorkouts(items);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not load workouts.';
+      Alert.alert('Could not load workouts', message);
+    } finally {
+      setLoading(false);
     }
-
-    setLoading(false);
   }, []);
 
   useEffect(() => {
@@ -73,7 +61,7 @@ export default function WorkoutsTabScreen() {
   }
 
   return (
-    <AppScreen title="Workouts">
+    <AppScreen title="Workouts" showCrossWatermark>
       <Text style={styles.sectionTitle}>Recent sessions</Text>
       <Text style={styles.hint}>Swipe left on a session to delete.</Text>
 

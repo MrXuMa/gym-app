@@ -1,0 +1,15 @@
+/* shadcn-rn amber-minimal — reference tokens for web tooling */
+:root {
+  --background: 0 0% 9%;
+  --foreground: 0 0% 90%;
+  --card: 0 0% 15%;
+  --card-foreground: 0 0% 90%;
+  --primary: 38 92% 50%;
+  --primary-foreground: 0 0% 0%;
+  --muted: 0 0% 12%;
+  --muted-foreground: 0 0% 64%;
+  --border: 0 0% 25%;
+  --input: 0 0% 25%;
+  --ring: 38 92% 50%;
+  --radius: 0.5rem;
+}

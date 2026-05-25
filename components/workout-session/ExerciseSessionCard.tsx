@@ -1,17 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
-import { RectButton, Swipeable } from 'react-native-gesture-handler';
-import type { Swipeable as SwipeableRef } from 'react-native-gesture-handler';
-import { useOpenSwipeable } from '@/hooks/useOpenSwipeable';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Keyboard, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import {
   addWorkoutSet,
@@ -22,21 +10,41 @@ import {
   type WorkoutSetLog,
 } from '@/lib/workoutSession';
 import { homeTheme } from '@/constants/theme';
+import type { DockedSetEditorPayload } from '@/components/workout-session/SetEditorDock';
 
-const SET_ROW_HEIGHT = 52;
-const VISIBLE_SET_ROWS = 5;
-const DELETE_WIDTH = 80;
+const CIRCLE_SIZE = 44;
+
+export type DraftWorkoutSet = WorkoutSetLog & { isDraft: true };
 
 type ExerciseSessionCardProps = {
   workoutId: string;
   exercise: SessionExercise;
+  localOnly?: boolean;
   removing?: boolean;
+  editingExerciseId?: string | null;
+  onEditingExerciseIdChange?: (exerciseId: string | null) => void;
+  onDockedEditorChange: (payload: DockedSetEditorPayload | null) => void;
   onSetsChange: (exerciseId: string, sets: WorkoutSetLog[]) => void;
   onRemove: () => void;
-  onSwipeableWillOpen: (ref: SwipeableRef) => void;
 };
 
-function parseReps(value: string) {
+function isDraftSet(set: WorkoutSetLog | DraftWorkoutSet): set is DraftWorkoutSet {
+  if ('isDraft' in set && set.isDraft === true) {
+    return true;
+  }
+
+  return set.id.startsWith('draft-');
+}
+
+function createDraftId() {
+  return `draft-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function parseReps(value: string): number | null {
+  if (!value.trim()) {
+    return null;
+  }
+
   return /^\d+$/.test(value.trim()) ? Number.parseInt(value, 10) : Number.NaN;
 }
 
@@ -48,153 +56,120 @@ function parseWeight(value: string) {
   return /^\d+(\.\d+)?$/.test(value.trim()) ? Number.parseFloat(value) : Number.NaN;
 }
 
-type SetRowProps = {
-  set: WorkoutSetLog;
-  saving: boolean;
-  deleting: boolean;
-  onSave: (setId: string, reps: number, weight: number | null) => Promise<void>;
-  onDelete: () => void;
-  onSwipeableWillOpen: (ref: SwipeableRef) => void;
-};
+function hasLoggedReps(reps: number | null): boolean {
+  return reps != null && Number.isFinite(reps) && reps > 0;
+}
 
-function SetRow({ set, saving, deleting, onSave, onDelete, onSwipeableWillOpen }: SetRowProps) {
-  const swipeableRef = useRef<SwipeableRef>(null);
-  const [reps, setReps] = useState(String(set.reps));
-  const [weight, setWeight] = useState(set.weight === null ? '' : String(set.weight));
+function isIncompleteSet(set: WorkoutSetLog | DraftWorkoutSet): boolean {
+  return isDraftSet(set) || !hasLoggedReps(set.reps);
+}
 
-  useEffect(() => {
-    setReps(String(set.reps));
-    setWeight(set.weight === null ? '' : String(set.weight));
-  }, [set.id, set.reps, set.weight]);
+/** Saved sets first (by stored order), then drafts — labels are always 1…n by index. */
+function buildAllSets(saved: WorkoutSetLog[], drafts: DraftWorkoutSet[]) {
+  return [
+    ...[...saved].sort((a, b) => a.setNumber - b.setNumber),
+    ...drafts,
+  ];
+}
 
-  async function persistSet() {
-    const parsedReps = parseReps(reps);
-    const parsedWeight = parseWeight(weight);
+function renumberDrafts(drafts: DraftWorkoutSet[], savedCount: number) {
+  return drafts.map((set, index) => ({
+    ...set,
+    setNumber: savedCount + index + 1,
+  }));
+}
 
-    if (!Number.isFinite(parsedReps) || parsedReps <= 0) {
-      Alert.alert('Invalid reps', 'Reps must be a positive whole number.');
-      setReps(String(set.reps));
-      return;
-    }
-
-    if (parsedWeight !== null && (!Number.isFinite(parsedWeight) || parsedWeight < 0)) {
-      Alert.alert('Invalid weight', 'Weight must be empty or a non-negative number.');
-      setWeight(set.weight === null ? '' : String(set.weight));
-      return;
-    }
-
-    if (parsedReps === set.reps && parsedWeight === set.weight) {
-      return;
-    }
-
-    await onSave(set.id, parsedReps, parsedWeight);
-  }
-
-  function handleWillOpen() {
-    if (swipeableRef.current) {
-      onSwipeableWillOpen(swipeableRef.current);
-    }
-  }
-
-  function renderRightActions() {
-    return (
-      <RectButton
-        style={styles.deleteAction}
-        onPress={() => {
-          swipeableRef.current?.close();
-          onDelete();
-        }}
-        enabled={!deleting}
-      >
-        {deleting ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
-          <View style={styles.deleteContent}>
-            <Ionicons name="trash-outline" size={20} color="#fff" />
-            <Text style={styles.deleteLabel}>Delete</Text>
-          </View>
-        )}
-      </RectButton>
-    );
-  }
-
-  return (
-    <View style={styles.setRowWrapper}>
-      <Swipeable
-        ref={swipeableRef}
-        renderRightActions={renderRightActions}
-        rightThreshold={40}
-        overshootRight={false}
-        friction={2}
-        onSwipeableWillOpen={handleWillOpen}
-      >
-        <View style={[styles.setRow, saving && styles.setRowSaving]}>
-          <Text style={styles.setLabel}>Set {set.setNumber}</Text>
-          <TextInput
-            style={styles.input}
-            value={weight}
-            onChangeText={setWeight}
-            onEndEditing={persistSet}
-            keyboardType="decimal-pad"
-            placeholder="Weight"
-            placeholderTextColor={homeTheme.colors.textMuted}
-            editable={!saving}
-          />
-          <TextInput
-            style={styles.input}
-            value={reps}
-            onChangeText={setReps}
-            onEndEditing={persistSet}
-            keyboardType="number-pad"
-            placeholder="Reps"
-            placeholderTextColor={homeTheme.colors.textMuted}
-            editable={!saving}
-          />
-        </View>
-      </Swipeable>
-    </View>
-  );
+function renumberSavedSets(sets: WorkoutSetLog[]) {
+  return sets.map((set, index) => ({
+    ...set,
+    setNumber: index + 1,
+  }));
 }
 
 function WorkoutBlockHeader({
   exercise,
   removing,
-  onRemove,
+  atMaxSets,
+  canDeleteSet,
+  deletingSet,
+  onAddSet,
+  onDeleteSet,
+  onRemoveBlock,
 }: {
   exercise: SessionExercise;
   removing: boolean;
-  onRemove: () => void;
+  atMaxSets: boolean;
+  canDeleteSet: boolean;
+  deletingSet: boolean;
+  onAddSet: () => void;
+  onDeleteSet: () => void;
+  onRemoveBlock: () => void;
 }) {
-  function confirmRemove() {
+  function confirmRemoveBlock() {
     Alert.alert(
       'Remove workout block?',
       `Remove "${exercise.name}" and all logged sets from this session?`,
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Remove', style: 'destructive', onPress: onRemove },
+        { text: 'Remove', style: 'destructive', onPress: onRemoveBlock },
       ],
     );
   }
 
   return (
     <View style={styles.header}>
-      <View style={styles.headerText}>
-        <Text style={styles.title}>{exercise.name}</Text>
-        {exercise.targetMuscle ? <Text style={styles.muscle}>{exercise.targetMuscle}</Text> : null}
-      </View>
       <Pressable
-        style={styles.removeBlockButton}
-        onPress={confirmRemove}
+        style={styles.blockRemoveButton}
+        onPress={confirmRemoveBlock}
         disabled={removing}
         hitSlop={8}
         accessibilityRole="button"
-        accessibilityLabel={`Remove ${exercise.name}`}
+        accessibilityLabel={`Remove ${exercise.name} block`}
       >
         {removing ? (
           <ActivityIndicator size="small" color={homeTheme.colors.danger} />
         ) : (
-          <Ionicons name="trash-outline" size={22} color={homeTheme.colors.danger} />
+          <Ionicons name="trash-outline" size={20} color={homeTheme.colors.danger} />
         )}
+      </Pressable>
+
+      <View style={styles.headerText}>
+        <Text style={styles.title}>{exercise.name}</Text>
+        {exercise.targetMuscle ? <Text style={styles.muscle}>{exercise.targetMuscle}</Text> : null}
+      </View>
+
+      <Pressable
+        style={[styles.headerIconButton, !canDeleteSet && styles.headerIconDisabled]}
+        onPress={onDeleteSet}
+        disabled={!canDeleteSet || deletingSet}
+        hitSlop={8}
+        accessibilityRole="button"
+        accessibilityLabel="Delete selected set"
+      >
+        {deletingSet ? (
+          <ActivityIndicator size="small" color={homeTheme.colors.textMuted} />
+        ) : (
+          <Ionicons
+            name="trash-outline"
+            size={20}
+            color={canDeleteSet ? homeTheme.colors.textPrimary : homeTheme.colors.textMuted}
+          />
+        )}
+      </Pressable>
+
+      <Pressable
+        style={[styles.headerIconButton, atMaxSets && styles.headerIconDisabled]}
+        onPress={onAddSet}
+        disabled={atMaxSets}
+        hitSlop={8}
+        accessibilityRole="button"
+        accessibilityLabel="Add set"
+      >
+        <Ionicons
+          name="add"
+          size={26}
+          color={atMaxSets ? homeTheme.colors.textMuted : homeTheme.colors.navYellow}
+        />
       </Pressable>
     </View>
   );
@@ -203,116 +178,361 @@ function WorkoutBlockHeader({
 export function ExerciseSessionCard({
   workoutId,
   exercise,
+  localOnly = false,
   removing = false,
+  editingExerciseId = null,
+  onEditingExerciseIdChange,
+  onDockedEditorChange,
   onSetsChange,
   onRemove,
-  onSwipeableWillOpen,
 }: ExerciseSessionCardProps) {
-  const [adding, setAdding] = useState(false);
-  const [savingSetId, setSavingSetId] = useState<string | null>(null);
-  const [deletingSetId, setDeletingSetId] = useState<string | null>(null);
-  const { close: closeOpenRow, onWillOpen: handleSetSwipeableWillOpen } = useOpenSwipeable();
-  const atMaxSets = exercise.sets.length >= MAX_SETS_PER_EXERCISE;
-  const setsScrollMaxHeight = VISIBLE_SET_ROWS * SET_ROW_HEIGHT + (VISIBLE_SET_ROWS - 1) * 8;
+  const [draftSets, setDraftSets] = useState<DraftWorkoutSet[]>([]);
+  const [selectedSetId, setSelectedSetId] = useState<string | null>(null);
+  const [editorReps, setEditorReps] = useState('');
+  const [editorWeight, setEditorWeight] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [deletingSet, setDeletingSet] = useState(false);
 
-  function handleSetRowWillOpen(ref: SwipeableRef) {
-    handleSetSwipeableWillOpen(ref);
-    onSwipeableWillOpen(ref);
-  }
+  const allSets = useMemo(
+    () => (localOnly ? [...exercise.sets].sort((a, b) => a.setNumber - b.setNumber) : buildAllSets(exercise.sets, draftSets)),
+    [draftSets, exercise.sets, localOnly],
+  );
 
-  async function handleAddSet() {
+  const atMaxSets = allSets.length >= MAX_SETS_PER_EXERCISE;
+  const isEditingThisCard = editingExerciseId === null || editingExerciseId === exercise.id;
+  const activeSelectedSetId = isEditingThisCard ? selectedSetId : null;
+  const selectedSet = allSets.find((set) => set.id === activeSelectedSetId) ?? null;
+  const selectedDisplayNumber =
+    activeSelectedSetId === null ? null : allSets.findIndex((set) => set.id === activeSelectedSetId) + 1;
+  const canDeleteSet = selectedSet !== null;
+  const dockPublishKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    setDraftSets([]);
+    setSelectedSetId(null);
+    setEditorReps('');
+    setEditorWeight('');
+    dockPublishKeyRef.current = null;
+  }, [exercise.id]);
+
+  useEffect(() => {
+    if (editingExerciseId !== null && editingExerciseId !== exercise.id) {
+      setSelectedSetId(null);
+    }
+  }, [editingExerciseId, exercise.id]);
+
+  useEffect(() => {
+    if (!selectedSet) {
+      setEditorReps('');
+      setEditorWeight('');
+      return;
+    }
+
+    setEditorReps(selectedSet.reps === null ? '' : String(selectedSet.reps));
+    setEditorWeight(selectedSet.weight === null ? '' : String(selectedSet.weight));
+  }, [selectedSet]);
+
+  function addDraftSet() {
     if (atMaxSets) {
       return;
     }
 
-    closeOpenRow();
-    setAdding(true);
+    const nextSetNumber = allSets.length + 1;
 
-    try {
-      const newSet = await addWorkoutSet(workoutId, exercise.id, 10, null);
-      onSetsChange(exercise.id, [...exercise.sets, newSet]);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Could not add set.';
-      Alert.alert('Could not add set', message);
-    } finally {
-      setAdding(false);
+    if (localOnly) {
+      const newSet: WorkoutSetLog = {
+        id: createDraftId(),
+        exerciseId: exercise.id,
+        setNumber: nextSetNumber,
+        reps: null,
+        weight: null,
+      };
+      onSetsChange(exercise.id, renumberSavedSets([...exercise.sets, newSet]));
+      setSelectedSetId(newSet.id);
+      onEditingExerciseIdChange?.(exercise.id);
+      return;
     }
+
+    const draft: DraftWorkoutSet = {
+      id: createDraftId(),
+      exerciseId: exercise.id,
+      setNumber: nextSetNumber,
+      reps: null,
+      weight: null,
+      isDraft: true,
+    };
+
+    setDraftSets((current) => [...current, draft]);
+    setSelectedSetId(draft.id);
+    onEditingExerciseIdChange?.(exercise.id);
   }
 
-  async function handleSaveSet(setId: string, reps: number, weight: number | null) {
-    setSavingSetId(setId);
-
-    try {
-      await updateWorkoutSet(setId, reps, weight);
-      onSetsChange(
-        exercise.id,
-        exercise.sets.map((set) => (set.id === setId ? { ...set, reps, weight } : set)),
-      );
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Could not save set.';
-      Alert.alert('Could not save set', message);
-    } finally {
-      setSavingSetId(null);
-    }
+  function selectSet(setId: string) {
+    setSelectedSetId(setId);
+    onEditingExerciseIdChange?.(exercise.id);
   }
 
-  async function handleDeleteSet(setId: string) {
-    setDeletingSetId(setId);
+  const finishEditing = useCallback(() => {
+    setSelectedSetId(null);
+    onEditingExerciseIdChange?.(null);
+    dockPublishKeyRef.current = null;
+    onDockedEditorChange(null);
+  }, [onDockedEditorChange, onEditingExerciseIdChange]);
+
+  function confirmDeleteSelectedSet() {
+    if (!selectedSet) {
+      return;
+    }
+
+    Alert.alert('Delete set?', `Remove set ${selectedDisplayNumber} from this block?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () => {
+          void handleDeleteSelectedSet();
+        },
+      },
+    ]);
+  }
+
+  async function handleDeleteSelectedSet() {
+    if (!selectedSet) {
+      return;
+    }
+
+    setDeletingSet(true);
 
     try {
-      const updatedSets = await deleteExerciseSet(workoutId, exercise.id, setId);
-      onSetsChange(exercise.id, updatedSets);
+      if (isDraftSet(selectedSet)) {
+        if (localOnly) {
+          const remaining = exercise.sets.filter((set) => set.id !== selectedSet.id);
+          onSetsChange(exercise.id, renumberSavedSets(remaining));
+          finishEditing();
+          return;
+        }
+
+        setDraftSets((current) => {
+          const remaining = current.filter((set) => set.id !== selectedSet.id);
+          return renumberDrafts(remaining, exercise.sets.length);
+        });
+        finishEditing();
+        return;
+      }
+
+      if (localOnly) {
+        const remaining = exercise.sets.filter((set) => set.id !== selectedSet.id);
+        onSetsChange(exercise.id, renumberSavedSets(remaining));
+        finishEditing();
+        return;
+      }
+
+      const updatedSets = await deleteExerciseSet(workoutId, exercise.id, selectedSet.id);
+      onSetsChange(exercise.id, renumberSavedSets(updatedSets));
+      setDraftSets((current) => renumberDrafts(current, updatedSets.length));
+      finishEditing();
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Could not delete set.';
       Alert.alert('Could not delete set', message);
     } finally {
-      setDeletingSetId(null);
+      setDeletingSet(false);
     }
+  }
+
+  const handleSaveSet = useCallback(async () => {
+    if (!selectedSet) {
+      return;
+    }
+
+    const parsedReps = parseReps(editorReps);
+    const parsedWeight = parseWeight(editorWeight);
+
+    if (parsedReps !== null && (!Number.isFinite(parsedReps) || parsedReps <= 0)) {
+      Alert.alert('Invalid reps', 'Reps must be empty or a positive whole number.');
+      return;
+    }
+
+    if (parsedWeight !== null && (!Number.isFinite(parsedWeight) || parsedWeight < 0)) {
+      Alert.alert('Invalid weight', 'Weight must be empty or a non-negative number.');
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      if (localOnly) {
+        onSetsChange(
+          exercise.id,
+          renumberSavedSets(
+            exercise.sets.map((set) => {
+              if (set.id !== selectedSet.id) {
+                return set;
+              }
+
+              return {
+                ...set,
+                id: isDraftSet(set) ? `local-${Date.now()}-${Math.random().toString(36).slice(2, 9)}` : set.id,
+                reps: parsedReps,
+                weight: parsedWeight,
+              };
+            }),
+          ),
+        );
+      } else if (isDraftSet(selectedSet)) {
+        const newSet = await addWorkoutSet(workoutId, exercise.id, parsedReps, parsedWeight);
+        const remainingDrafts = draftSets.filter((set) => set.id !== selectedSet.id);
+        onSetsChange(
+          exercise.id,
+          renumberSavedSets([...exercise.sets, newSet]),
+        );
+        setDraftSets(renumberDrafts(remainingDrafts, exercise.sets.length + 1));
+      } else if (parsedReps !== selectedSet.reps || parsedWeight !== selectedSet.weight) {
+        await updateWorkoutSet(selectedSet.id, parsedReps, parsedWeight);
+        onSetsChange(
+          exercise.id,
+          exercise.sets.map((set) =>
+            set.id === selectedSet.id ? { ...set, reps: parsedReps, weight: parsedWeight } : set,
+          ),
+        );
+      }
+
+      Keyboard.dismiss();
+      setSaving(false);
+      finishEditing();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not save set.';
+      Alert.alert('Could not save set', message);
+      setSaving(false);
+    }
+  }, [
+    selectedSet,
+    editorReps,
+    editorWeight,
+    workoutId,
+    exercise.id,
+    exercise.sets,
+    draftSets,
+    localOnly,
+    onSetsChange,
+    finishEditing,
+  ]);
+
+  useEffect(() => {
+    const isOwner = editingExerciseId === exercise.id;
+
+    if (!isOwner) {
+      dockPublishKeyRef.current = null;
+      return;
+    }
+
+    if (!selectedSet || selectedDisplayNumber === null) {
+      if (dockPublishKeyRef.current !== null) {
+        dockPublishKeyRef.current = null;
+        onDockedEditorChange(null);
+      }
+      return;
+    }
+
+    const publishKey = `${selectedSet.id}:${selectedDisplayNumber}:${editorReps}:${editorWeight}:${saving}`;
+    if (dockPublishKeyRef.current === publishKey) {
+      return;
+    }
+
+    dockPublishKeyRef.current = publishKey;
+    onDockedEditorChange({
+      exerciseId: exercise.id,
+      exerciseName: exercise.name,
+      displayNumber: selectedDisplayNumber,
+      reps: editorReps,
+      weight: editorWeight,
+      saving,
+      onChangeReps: setEditorReps,
+      onChangeWeight: setEditorWeight,
+      onSave: () => {
+        void handleSaveSet();
+      },
+      onClose: finishEditing,
+    });
+  }, [
+    editingExerciseId,
+    selectedSet,
+    selectedDisplayNumber,
+    editorReps,
+    editorWeight,
+    saving,
+    exercise.id,
+    exercise.name,
+    onDockedEditorChange,
+    finishEditing,
+    handleSaveSet,
+  ]);
+
+  function getCircleOpacity(set: WorkoutSetLog | DraftWorkoutSet) {
+    if (set.id === activeSelectedSetId) {
+      return 1;
+    }
+
+    // Incomplete sets (null reps) stay fully opaque so they are easy to spot before end workout.
+    if (isIncompleteSet(set)) {
+      return 1;
+    }
+
+    return 0.38;
   }
 
   return (
     <View style={styles.card}>
-      <WorkoutBlockHeader exercise={exercise} removing={removing} onRemove={onRemove} />
+      <WorkoutBlockHeader
+        exercise={exercise}
+        removing={removing}
+        atMaxSets={atMaxSets}
+        canDeleteSet={canDeleteSet}
+        deletingSet={deletingSet}
+        onAddSet={addDraftSet}
+        onDeleteSet={confirmDeleteSelectedSet}
+        onRemoveBlock={onRemove}
+      />
 
-      {exercise.sets.length === 0 ? (
-        <Text style={styles.emptySets}>No sets yet. Add your first set below.</Text>
-      ) : (
-        <>
-          <Text style={styles.hint}>Swipe left on a set to delete.</Text>
-          <ScrollView
-            style={[styles.setsScroll, { maxHeight: setsScrollMaxHeight }]}
-            nestedScrollEnabled
-            showsVerticalScrollIndicator={exercise.sets.length > VISIBLE_SET_ROWS}
-            onScrollBeginDrag={closeOpenRow}
-          >
-            {exercise.sets.map((set) => (
-              <SetRow
+      {allSets.length > 0 ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.circlesRow}
+          style={styles.circlesScroll}
+        >
+          {allSets.map((set, index) => {
+            const isSelected = set.id === activeSelectedSetId;
+            const isSaved = !isDraftSet(set);
+            const incomplete = isIncompleteSet(set);
+            const displayNumber = index + 1;
+            const statusLabel = !isSaved
+              ? ', draft'
+              : incomplete
+                ? ', incomplete, removed when workout ends'
+                : ', saved';
+
+            return (
+              <Pressable
                 key={set.id}
-                set={set}
-                saving={savingSetId === set.id}
-                deleting={deletingSetId === set.id}
-                onSave={handleSaveSet}
-                onDelete={() => handleDeleteSet(set.id)}
-                onSwipeableWillOpen={handleSetRowWillOpen}
-              />
-            ))}
-          </ScrollView>
-        </>
-      )}
-
-      <Pressable
-        style={[styles.addSetButton, (adding || atMaxSets) && styles.disabled]}
-        disabled={adding || atMaxSets}
-        onPress={handleAddSet}
-      >
-        {adding ? (
-          <ActivityIndicator color={homeTheme.colors.textPrimary} />
-        ) : (
-          <Text style={styles.addSetText}>
-            {atMaxSets ? `Max ${MAX_SETS_PER_EXERCISE} sets` : 'Add set'}
-          </Text>
-        )}
-      </Pressable>
+                style={[
+                  styles.setCircle,
+                  incomplete && !isSelected && styles.setCircleIncomplete,
+                  isSelected && styles.setCircleSelected,
+                  { opacity: getCircleOpacity(set) },
+                ]}
+                onPress={() => selectSet(set.id)}
+                accessibilityRole="button"
+                accessibilityLabel={`Set ${displayNumber}${statusLabel}`}
+                accessibilityState={{ selected: isSelected }}
+              >
+                <Text style={[styles.setCircleText, isSelected && styles.setCircleTextSelected]}>
+                  {displayNumber}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      ) : null}
     </View>
   );
 }
@@ -320,9 +540,9 @@ export function ExerciseSessionCard({
 const styles = StyleSheet.create({
   card: {
     borderWidth: 1,
-    borderColor: homeTheme.colors.surfaceBorder,
+    borderColor: homeTheme.colors.border,
     borderRadius: homeTheme.radius.card,
-    backgroundColor: homeTheme.colors.surface,
+    backgroundColor: homeTheme.colors.card,
     padding: 14,
     marginBottom: 12,
   },
@@ -336,12 +556,21 @@ const styles = StyleSheet.create({
   headerText: {
     flex: 1,
   },
-  removeBlockButton: {
-    padding: 4,
-    minWidth: 32,
-    minHeight: 32,
+  blockRemoveButton: {
+    width: 32,
+    height: 36,
     alignItems: 'center',
     justifyContent: 'center',
+    marginRight: 4,
+  },
+  headerIconButton: {
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerIconDisabled: {
+    opacity: 0.45,
   },
   title: {
     color: homeTheme.colors.textPrimary,
@@ -353,79 +582,39 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 2,
   },
-  emptySets: {
-    color: homeTheme.colors.textMuted,
-    fontSize: 13,
-    marginBottom: 10,
+  circlesScroll: {
+    marginBottom: 4,
   },
-  hint: {
-    color: homeTheme.colors.textMuted,
-    fontSize: 11,
-    marginBottom: 8,
-  },
-  setsScroll: {
-    marginBottom: 10,
-  },
-  setRowWrapper: {
-    marginBottom: 8,
-    backgroundColor: homeTheme.colors.surface,
-  },
-  setRow: {
+  circlesRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    minHeight: SET_ROW_HEIGHT,
-    backgroundColor: homeTheme.colors.surface,
+    gap: 10,
+    paddingVertical: 4,
   },
-  setRowSaving: {
-    opacity: 0.65,
-  },
-  setLabel: {
-    width: 44,
-    color: homeTheme.colors.textMuted,
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  input: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: homeTheme.colors.surfaceBorder,
-    borderRadius: homeTheme.radius.button,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    color: homeTheme.colors.textPrimary,
+  setCircle: {
+    width: CIRCLE_SIZE,
+    height: CIRCLE_SIZE,
+    borderRadius: CIRCLE_SIZE / 2,
+    borderWidth: 1.5,
+    borderColor: homeTheme.colors.border,
     backgroundColor: homeTheme.colors.background,
-    fontSize: 14,
-  },
-  deleteAction: {
-    width: DELETE_WIDTH,
-    backgroundColor: homeTheme.colors.danger,
+    alignItems: 'center',
     justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 0,
   },
-  deleteContent: {
-    alignItems: 'center',
-    gap: 4,
+  setCircleIncomplete: {
+    borderColor: homeTheme.colors.mutedForeground,
+    borderStyle: 'dashed',
   },
-  deleteLabel: {
-    color: '#fff',
-    fontSize: 11,
+  setCircleSelected: {
+    borderColor: homeTheme.colors.primary,
+    backgroundColor: 'rgba(245, 158, 11, 0.12)',
+  },
+  setCircleText: {
+    color: homeTheme.colors.textPrimary,
+    fontSize: 16,
     fontWeight: '700',
   },
-  addSetButton: {
-    borderWidth: 1,
-    borderColor: homeTheme.colors.surfaceBorder,
-    borderRadius: homeTheme.radius.button,
-    paddingVertical: 10,
-    alignItems: 'center',
-  },
-  addSetText: {
-    color: homeTheme.colors.textPrimary,
-    fontWeight: '600',
-    fontSize: 14,
-  },
-  disabled: {
-    opacity: 0.6,
+  setCircleTextSelected: {
+    color: homeTheme.colors.primary,
   },
 });

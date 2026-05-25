@@ -1,0 +1,73 @@
+# Coach worker (VM deploy)
+
+Copy **the entire contents** of this folder (`vm/coach-worker/` from the repo) into `/opt/coach-stack/coach-api/` on your VM — not individual files into random paths. The directory on the VM must contain `Dockerfile`, `package.json`, and all `.js` files before you build.
+
+```bash
+# On the VM — verify before build (must list server.js + Dockerfile)
+ls -la /opt/coach-stack/coach-api/
+
+cd /opt/coach-stack
+docker compose build coach-api --no-cache
+docker compose up -d coach-api
+docker compose logs -f coach-api
+```
+
+### `Cannot find module '/app/server.js'`
+
+Node starts but `/app` has no `server.js`. Common causes:
+
+1. **Volume mount hides the image** — if `docker-compose.yml` has `volumes: - ./coach-api:/app`, the **host** folder must contain `server.js`. An empty or partial host dir replaces the built image and causes this error. Either put all files in that host folder or remove the bind mount for production.
+2. **Build context is wrong** — `build:` must point at the directory that contains `Dockerfile` and `server.js` (usually `./coach-api` under `/opt/coach-stack`).
+3. **Partial copy** — copying only `server.js` into a parent directory while Compose builds from `./coach-api` leaves the build context without `server.js`.
+
+Fix: sync the full `vm/coach-worker/` tree to `/opt/coach-stack/coach-api/`, confirm `ls` shows `server.js`, then `docker compose build coach-api --no-cache`.
+
+## Files
+
+| File | Purpose |
+|------|---------|
+| `server.js` | Supabase pull worker (advice + template + context-sync queues) + Ollama client + health endpoints |
+| `contextMerge.js` | Rebuild one user's `coach_context` row from bounded Supabase queries |
+| `contextHelpers.js` | Pure helpers: logged-performance allowlist, summary sanitizer, 90-day weight-trend summary |
+| `trainingSignals.js` | Muscle recovery / readiness hints from `recent_sessions` |
+| `coachGeneralKnowledge.js` | Shared evidence-based lifting knowledge (same for every user) |
+| `coachTemplate.js` | Structured workout-template JSON prompt + draft validation against the catalog |
+| `coachCatalogCache.js` | Process-level TTL cache for the global exercise catalog (`COACH_CATALOG_TTL_MS`, default 10m) |
+| `Dockerfile` | Node 22 Alpine image |
+| `package.json` | `express` only (no Redis/JWT) |
+
+> The directory on the VM must contain **exactly** these `.js` files plus `Dockerfile` and `package.json`. If older files (`loggedPerformance.js`, `weightTrend.js`, `exerciseCatalog.js`) are still present from a previous deploy, delete them before rebuilding to avoid drift.
+
+## Env (docker-compose)
+
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `OLLAMA_HOST` (default `http://ollama:11434`)
+- `MODEL_NAME` (default `llama3.1:8b`)
+- `COACH_DATA_DIR` (default `/data/coach`)
+- `COACH_NUM_CTX` (default `8192`) — Ollama context window
+- `COACH_NUM_PREDICT` (default `350`) — max tokens generated per advice job (hard ceiling so the model can't ramble; raise temporarily if users ask for a full program outline)
+- `COACH_CATALOG_TTL_MS` (default `600000` = 10 min) — exercise catalog cache TTL. Lower for faster reflection of new exercises added via SQL; higher for less Supabase traffic.
+
+## Context token budget (RTX 2060 Super 8GB, llama3.1:8b Q4)
+
+| Setting | Value | Notes |
+|---------|-------|-------|
+| **num_ctx** | **8192** (default) | Safe on 8GB VRAM with Q4 8B. Lower to 6144 if OOM; avoid 16k+ on this GPU. |
+| General knowledge | ~1.4–1.8k tokens | Fixed for every advice job |
+| Athlete JSON + summaries | ~1.5–3.5k tokens | Grows with session history |
+| Question + rules | ~0.3–0.5k tokens | |
+| **Output (num_predict)** | **350** | Forces concise answers (~250 words max). Raise via `COACH_NUM_PREDICT` for full program outlines. |
+| **Headroom** | ~2–3k tokens | KV cache + safety margin |
+
+Ollama’s default `num_ctx` is often **2048**, which truncates long prompts and causes vague answers. This worker sets **8192** explicitly.
+
+After deploy, logs show: `prompt budget ~NNNN tokens (general ~MMMM, num_ctx=8192)`.
+
+If advice jobs fail with CUDA OOM, set `COACH_NUM_CTX=6144` in compose.
+
+## Prompt layers
+
+1. **General knowledge** — volume, recovery, RPE, exercise hierarchy, “what to train tomorrow” protocol
+2. **Athlete context** — goals, sessions, `training_signals` (muscles ready vs avoid)
+3. **Prior summaries** — long-term coach memory

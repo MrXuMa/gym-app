@@ -1,25 +1,22 @@
+import { useState } from 'react';
 import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { Image } from 'expo-image';
 import { AppScreen } from '@/components/layout/AppScreen';
 import { AddWidgetButton } from '@/components/home/AddWidgetButton';
+import { PredictedMaxPicker } from '@/components/home/PredictedMaxPicker';
 import { WidgetGrid } from '@/components/home/WidgetGrid';
 import { useHomeMetrics } from '@/hooks/useHomeMetrics';
 import { useProfile } from '@/hooks/useProfile';
 import { homeTheme } from '@/constants/theme';
 
-const homeCrossWatermark = require('@/assets/images/home-cross-watermark.png');
-
 export function HomeScreen() {
   const { displayName } = useProfile();
-  const { metrics, loading, refreshing, refresh } = useHomeMetrics();
+  const { metrics, settings, loading, refreshing, refresh, setPredictedMaxExerciseId } =
+    useHomeMetrics();
+  const [predictedMaxPickerVisible, setPredictedMaxPickerVisible] = useState(false);
 
   return (
-    <AppScreen title="Home" headerLeft={<AddWidgetButton />}>
+    <AppScreen title="Home" headerLeft={<AddWidgetButton />} showCrossWatermark>
       <View style={styles.screen}>
-        <View style={styles.watermarkWrap} pointerEvents="none">
-          <Image source={homeCrossWatermark} style={styles.watermark} contentFit="contain" />
-        </View>
-
         <View style={styles.content}>
           <View style={styles.header}>
             <Text style={styles.greeting}>Welcome, {displayName}.</Text>
@@ -39,11 +36,23 @@ export function HomeScreen() {
                 />
               }
             >
-              <WidgetGrid metrics={metrics} />
+              <WidgetGrid
+                metrics={metrics}
+                onEditPredictedMax={() => setPredictedMaxPickerVisible(true)}
+              />
             </ScrollView>
           )}
         </View>
       </View>
+
+      <PredictedMaxPicker
+        visible={predictedMaxPickerVisible}
+        selectedExerciseId={settings.predictedMaxExerciseId}
+        onClose={() => setPredictedMaxPickerVisible(false)}
+        onSelect={async (exerciseId) => {
+          await setPredictedMaxExerciseId(exerciseId);
+        }}
+      />
     </AppScreen>
   );
 }
@@ -51,16 +60,6 @@ export function HomeScreen() {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-  },
-  watermarkWrap: {
-    ...StyleSheet.absoluteFillObject,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  watermark: {
-    width: '120%',
-    height: '110%',
-    opacity: homeTheme.home.watermarkOpacity,
   },
   content: {
     flex: 1,

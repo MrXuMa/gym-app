@@ -50,7 +50,7 @@ export function AuthScreenLayout({ children }: AuthScreenLayoutProps) {
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: homeTheme.auth.overlaySolid,
+    backgroundColor: homeTheme.colors.background,
     ...Platform.select({
       web: {
         minHeight: '100vh' as unknown as number,
@@ -60,7 +60,7 @@ const styles = StyleSheet.create({
   },
   backdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: homeTheme.auth.overlaySolid,
+    backgroundColor: homeTheme.colors.background,
     overflow: 'hidden',
     ...Platform.select({
       web: {
@@ -78,6 +78,7 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     width: '100%',
     height: '100%',
+    opacity: 0.35,
   },
   safeArea: {
     flex: 1,

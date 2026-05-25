@@ -39,10 +39,10 @@ const styles = StyleSheet.create({
   title: {
     flex: 1,
     textAlign: 'center',
-    color: homeTheme.colors.textPrimary,
+    color: homeTheme.colors.foreground,
     fontSize: 17,
-    fontWeight: '700',
-    letterSpacing: 0.5,
+    fontWeight: '600',
+    letterSpacing: 0.2,
   },
   titleSpacer: {
     flex: 1,

@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { enqueueCoachContextSync } from '@/lib/coachContextSync';
 import {
   clearActiveWorkoutCache,
   getActiveWorkoutCache,
@@ -17,7 +18,7 @@ export type WorkoutSetLog = {
   id: string;
   exerciseId: string;
   setNumber: number;
-  reps: number;
+  reps: number | null;
   weight: number | null;
 };
 
@@ -78,6 +79,10 @@ export async function createActiveWorkoutSession(title: string): Promise<ActiveW
   const trimmedTitle = title.trim();
   if (!trimmedTitle) {
     throw new Error('Workout name is required.');
+  }
+
+  if (trimmedTitle.length > 80) {
+    throw new Error('Workout name must be 80 characters or fewer.');
   }
 
   const now = new Date().toISOString();
@@ -239,7 +244,7 @@ export async function loadWorkoutSession(
     };
   });
 
-  if (useActiveCache && workoutResult.data.status === 'active' && cache?.workoutId !== workoutId) {
+  if (useActiveCache && workoutResult.data.status === 'active' && cache?.workoutId === workoutId) {
     await saveActiveWorkoutCache({
       workoutId,
       startedAt: workoutResult.data.started_at,
@@ -258,7 +263,7 @@ export async function loadWorkoutSession(
 export async function addWorkoutSet(
   workoutId: string,
   exerciseId: string,
-  reps: number,
+  reps: number | null,
   weight: number | null,
 ): Promise<WorkoutSetLog> {
   const { data: existing, error: countError } = await supabase
@@ -307,7 +312,7 @@ export async function addWorkoutSet(
 
 export async function updateWorkoutSet(
   logId: string,
-  reps: number,
+  reps: number | null,
   weight: number | null,
 ): Promise<void> {
   const { error } = await supabase.from('workout_logs').update({ reps, weight }).eq('id', logId);
@@ -317,21 +322,7 @@ export async function updateWorkoutSet(
   }
 }
 
-export async function deleteWorkoutSet(logId: string): Promise<void> {
-  const { error } = await supabase.from('workout_logs').delete().eq('id', logId);
-
-  if (error) {
-    throw error;
-  }
-}
-
-export async function deleteExerciseSet(
-  workoutId: string,
-  exerciseId: string,
-  logId: string,
-): Promise<WorkoutSetLog[]> {
-  await deleteWorkoutSet(logId);
-
+async function renumberExerciseSets(workoutId: string, exerciseId: string): Promise<WorkoutSetLog[]> {
   const { data: remaining, error: fetchError } = await supabase
     .from('workout_logs')
     .select('id, exercise_id, set_number, reps, weight')
@@ -372,7 +363,60 @@ export async function deleteExerciseSet(
   return renumbered;
 }
 
+export async function deleteExerciseSet(
+  workoutId: string,
+  exerciseId: string,
+  logId: string,
+): Promise<WorkoutSetLog[]> {
+  const { error } = await supabase.from('workout_logs').delete().eq('id', logId);
+
+  if (error) {
+    throw error;
+  }
+
+  return renumberExerciseSets(workoutId, exerciseId);
+}
+
+function hasLoggedReps(reps: number | null): boolean {
+  return reps != null && Number.isFinite(reps) && reps > 0;
+}
+
+async function pruneIncompleteWorkoutSets(workoutId: string): Promise<void> {
+  const { data: logs, error } = await supabase
+    .from('workout_logs')
+    .select('id, exercise_id, reps')
+    .eq('workout_id', workoutId);
+
+  if (error) {
+    throw error;
+  }
+
+  const incomplete = (logs ?? []).filter((row) => !hasLoggedReps(row.reps));
+  if (incomplete.length === 0) {
+    return;
+  }
+
+  const { error: deleteError } = await supabase
+    .from('workout_logs')
+    .delete()
+    .in(
+      'id',
+      incomplete.map((row) => row.id),
+    );
+
+  if (deleteError) {
+    throw deleteError;
+  }
+
+  const exerciseIds = [...new Set(incomplete.map((row) => row.exercise_id))];
+  for (const exerciseId of exerciseIds) {
+    await renumberExerciseSets(workoutId, exerciseId);
+  }
+}
+
 export async function endActiveWorkoutSession(workoutId: string, startedAt: string): Promise<void> {
+  await pruneIncompleteWorkoutSets(workoutId);
+
   const endedAt = new Date();
   const started = new Date(startedAt);
   const durationSeconds = Math.max(0, Math.floor((endedAt.getTime() - started.getTime()) / 1000));
@@ -394,6 +438,8 @@ export async function endActiveWorkoutSession(workoutId: string, startedAt: stri
   }
 
   await clearActiveWorkoutCache();
+
+  void enqueueCoachContextSync();
 }
 
 export function formatDuration(totalSeconds: number) {

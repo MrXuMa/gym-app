@@ -1,16 +1,17 @@
 import React, { useState } from 'react';
-import { ActivityIndicator, Alert, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, Pressable, Text, TextInput, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { AuthCard } from '@/components/auth/AuthCard';
 import { AuthScreenLayout } from '@/components/auth/AuthScreenLayout';
 import { BirthdayPicker } from '../components/auth/BirthdayPicker';
 import { HeightPicker } from '../components/auth/HeightPicker';
 import { authPlaceholderColor, authStyles, webInputReset } from '../components/auth/authStyles';
-import { homeTheme } from '@/constants/theme';
+import { Button } from '@/components/ui/button';
 import { buildBirthday, calculateAge } from '../components/auth/pickerUtils';
 import { getAuthRedirectUrl, getEmailForLogin, getPasswordResetRedirectUrl } from '../lib/auth';
 import { getPasswordValidationError } from '../lib/passwordValidation';
 import { supabase } from '../lib/supabase';
+import { WEIGHT_UNIT_LABEL } from '@/constants/units';
 
 type SignUpResultData = {
   user: { identities?: unknown[] } | null;
@@ -268,7 +269,7 @@ export default function Auth() {
   return (
     <AuthScreenLayout>
       <AuthCard>
-        <Text style={authStyles.header}>{isSigningUp ? 'Register' : 'Login'}</Text>
+        <Text style={authStyles.header}>{isSigningUp ? 'Create account' : 'Log in'}</Text>
 
         <View style={authStyles.field}>
           <TextInput
@@ -344,7 +345,7 @@ export default function Auth() {
                 <TextInput
                   onChangeText={updateField(setWeight)}
                   value={weight}
-                  placeholder="Weight"
+                  placeholder={`Weight (${WEIGHT_UNIT_LABEL})`}
                   placeholderTextColor={authPlaceholderColor}
                   keyboardType="decimal-pad"
                   returnKeyType="next"
@@ -396,10 +397,10 @@ export default function Auth() {
             </Text>
           </>
         ) : (
-          <View style={{ alignItems: 'flex-end', marginBottom: 18 }}>
-            <TouchableOpacity disabled={loading} onPress={resetPassword}>
-              <Text style={authStyles.optionText}>Forgot Password?</Text>
-            </TouchableOpacity>
+          <View style={{ alignItems: 'flex-end', marginBottom: 8 }}>
+            <Pressable disabled={loading} onPress={resetPassword} hitSlop={8}>
+              <Text style={authStyles.link}>Forgot password?</Text>
+            </Pressable>
           </View>
         )}
 
@@ -415,21 +416,21 @@ export default function Auth() {
 
         {statusMessage ? <Text style={authStyles.statusMessage}>{statusMessage}</Text> : null}
 
-        <TouchableOpacity
-          style={[authStyles.button, loading && authStyles.disabled]}
-          disabled={loading}
-          onPress={isSigningUp ? signUpWithEmail : signIn}
-        >
-          {loading ? (
-            <ActivityIndicator color={homeTheme.colors.buttonText} />
-          ) : (
-            <Text style={authStyles.buttonText}>{isSigningUp ? 'Create Account' : 'Log in'}</Text>
-          )}
-        </TouchableOpacity>
+        <View style={authStyles.actions}>
+          <Button
+            label={isSigningUp ? 'Create account' : 'Log in'}
+            fullWidth
+            loading={loading}
+            onPress={isSigningUp ? signUpWithEmail : signIn}
+          />
+        </View>
 
-        <TouchableOpacity style={authStyles.footerLink} onPress={switchAuthMode}>
-          <Text style={authStyles.footerText}>{isSigningUp ? 'Already have an account? Login' : "Don't have an account? Register"}</Text>
-        </TouchableOpacity>
+        <Pressable style={authStyles.footerLink} onPress={switchAuthMode}>
+          <Text style={authStyles.footerText}>
+            {isSigningUp ? 'Already have an account? ' : "Don't have an account? "}
+            <Text style={authStyles.footerTextHighlight}>{isSigningUp ? 'Log in' : 'Register'}</Text>
+          </Text>
+        </Pressable>
       </AuthCard>
     </AuthScreenLayout>
   );

@@ -8,7 +8,6 @@
     "start:phone": "set REACT_NATIVE_PACKAGER_HOSTNAME=192.168.100.128&& expo start --lan",
     "start:tunnel": "expo start --tunnel",
     "start:clear": "expo start --clear",
-    "reset-project": "node ./scripts/reset-project.js",
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",

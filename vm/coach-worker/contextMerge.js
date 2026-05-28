@@ -64,6 +64,51 @@ function startOfWeek(d) {
   return s;
 }
 
+/**
+ * Summarise the last 7 days of nutrition logs into daily macro averages.
+ * Included in coach context so the LLM can comment on nutrition trends.
+ */
+function buildNutritionSummary(logs) {
+  if (!Array.isArray(logs) || logs.length === 0) return null;
+
+  const byDay = new Map();
+  for (const row of logs) {
+    const day = (row.logged_at ?? '').slice(0, 10);
+    if (!day) continue;
+    const existing = byDay.get(day) ?? { kcal: 0, protein_g: 0, carbs_g: 0, fat_g: 0, entries: 0 };
+    existing.kcal += row.kcal ?? 0;
+    existing.protein_g += parseFloat(row.protein_g ?? 0);
+    existing.carbs_g += parseFloat(row.carbs_g ?? 0);
+    existing.fat_g += parseFloat(row.fat_g ?? 0);
+    existing.entries += 1;
+    byDay.set(day, existing);
+  }
+
+  const days = [...byDay.entries()].sort(([a], [b]) => b.localeCompare(a));
+  const totals = days.reduce((acc, [, v]) => ({
+    kcal: acc.kcal + v.kcal,
+    protein_g: acc.protein_g + v.protein_g,
+    carbs_g: acc.carbs_g + v.carbs_g,
+    fat_g: acc.fat_g + v.fat_g,
+  }), { kcal: 0, protein_g: 0, carbs_g: 0, fat_g: 0 });
+
+  const n = days.length || 1;
+  return {
+    days_logged: days.length,
+    avg_kcal_per_day: Math.round(totals.kcal / n),
+    avg_protein_g: Math.round(totals.protein_g / n),
+    avg_carbs_g: Math.round(totals.carbs_g / n),
+    avg_fat_g: Math.round(totals.fat_g / n),
+    daily: days.slice(0, 7).map(([date, v]) => ({
+      date,
+      kcal: Math.round(v.kcal),
+      protein_g: Math.round(v.protein_g),
+      carbs_g: Math.round(v.carbs_g),
+      fat_g: Math.round(v.fat_g),
+    })),
+  };
+}
+
 function normalizeLastAdvice(raw) {
   if (!raw || typeof raw !== 'object') {
     return { at: null, question: null, summary: null };
@@ -167,7 +212,10 @@ async function rebuildUserCoachContext(userId, supabaseRest) {
   const weightCutoff = new Date();
   weightCutoff.setDate(weightCutoff.getDate() - WEIGHT_WINDOW_DAYS);
 
-  const [profiles, recentWorkouts, previousRows, weightLogs, splitRows] = await Promise.all([
+  const nutritionCutoff = new Date();
+  nutritionCutoff.setDate(nutritionCutoff.getDate() - 7);
+
+  const [profiles, recentWorkouts, previousRows, weightLogs, splitRows, nutritionLogs] = await Promise.all([
     supabaseRest(
       'GET',
       `profiles?id=eq.${userId}&select=username,first_name,last_name,weight,goals&limit=1`,
@@ -186,6 +234,10 @@ async function rebuildUserCoachContext(userId, supabaseRest) {
     supabaseRest(
       'GET',
       `split_information?user_id=eq.${userId}&select=schedule&limit=1`,
+    ).catch(() => []),
+    supabaseRest(
+      'GET',
+      `nutrition_logs?user_id=eq.${userId}&logged_at=gte.${nutritionCutoff.toISOString()}&select=logged_at,kcal,protein_g,carbs_g,fat_g&order=logged_at.desc&limit=50`,
     ).catch(() => []),
   ]);
 
@@ -261,6 +313,7 @@ async function rebuildUserCoachContext(userId, supabaseRest) {
     logged_exercise_names: buildLoggedExerciseNames(recentSessions),
     training_signals: buildTrainingSignals(recentSessions),
     training_split: trainingSplit,
+    nutrition_summary: buildNutritionSummary(nutritionLogs ?? []),
     flags: previousContext.flags ?? [],
     response_summaries: normalizeResponseSummaries(previousContext),
     last_advice: normalizeLastAdvice(previousContext.last_advice),

@@ -36,9 +36,15 @@ async function fetchCatalog(supabaseRest) {
   );
   const safe = rows ?? [];
 
+  const names = safe
+    .map((row) => row.name?.trim())
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
+
   return {
     rows: safe,
     byMuscle: groupByMuscle(safe),
+    names,
     count: safe.length,
     fetchedAt: Date.now(),
   };

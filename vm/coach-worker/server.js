@@ -3,7 +3,6 @@
  * HTTP is health checks only (local monitoring). Phones talk to Supabase, not this service.
  */
 const express = require('express');
-const fs = require('fs/promises');
 const { rebuildUserCoachContext } = require('./contextMerge');
 const { GENERAL_COACH_KNOWLEDGE, estimateTokens } = require('./coachGeneralKnowledge');
 const { sanitizeAdviceSummary } = require('./contextHelpers');
@@ -15,13 +14,45 @@ const app = express();
 const port = Number(process.env.PORT || 8080);
 const ollamaHost = (process.env.OLLAMA_HOST || 'http://ollama:11434').replace(/\/$/, '');
 const modelName = process.env.MODEL_NAME || 'llama3.1:8b';
-const coachDataDir = (process.env.COACH_DATA_DIR || '/data/coach').replace(/\/$/, '');
 const supabaseUrl = (process.env.SUPABASE_URL || '').replace(/\/$/, '');
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const MAX_QUESTION_LENGTH = 500;
 /** Ollama context window. 8192 fits llama3.1:8b Q4 on 8GB VRAM with room for general + athlete context. */
 const coachNumCtx = Number(process.env.COACH_NUM_CTX || 8192);
+/** Max tokens for session-plan answers (Focus + exercise list). */
 const coachNumPredict = Number(process.env.COACH_NUM_PREDICT || 350);
+/** Max tokens for reasoning / education answers (longer explanations). */
+const coachNumPredictReasoning = Number(process.env.COACH_NUM_PREDICT_REASONING || 520);
+
+const PLAN_QUESTION_RE =
+  /\b(what should i train|what should i hit|what (?:do|should i do) tomorrow|what to (?:do|train)(?:\s+tomorrow|\s+today)?|give me a workout|plan my (?:session|workout)|build me a routine|design a workout|workout for (?:today|tomorrow)|train (?:today|tomorrow)|my next session should)\b/i;
+
+const REASONING_QUESTION_RE =
+  /\b(how many|how much|how often|how long|is it optimal|is optimal|should i|why\b|what is the best|what's the best|what are the best|too (?:much|little)|optimal|frequency|per week|weekly|volume|enough sets|explain|compare|versus|vs\.?|better to|difference between|when should i|can i|do i need|recommend|ideal|typical|average|science|research|evidence)\b/i;
+
+/**
+ * @returns {'plan' | 'reasoning'}
+ */
+function classifyAdviceMode(question) {
+  const normalized = String(question ?? '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+
+  if (REASONING_QUESTION_RE.test(normalized)) {
+    return 'reasoning';
+  }
+
+  if (PLAN_QUESTION_RE.test(normalized)) {
+    return 'plan';
+  }
+
+  // Default to reasoning — avoids dumping a workout template on general questions.
+  return 'reasoning';
+}
+
+function numPredictForAdviceMode(mode) {
+  return mode === 'plan' ? coachNumPredict : coachNumPredictReasoning;
+}
 
 // ---------- supabase REST ----------
 async function supabaseRest(method, path, { body, prefer } = {}) {
@@ -159,19 +190,14 @@ async function readCoachContext(userId) {
     return rows[0].context;
   }
 
-  // Fallback to local file (legacy / pre-Supabase contexts).
-  try {
-    const raw = await fs.readFile(`${coachDataDir}/users/${userId}.json`, 'utf8');
-    if (!raw.trim()) throw new Error('empty context file');
-    return JSON.parse(raw);
-  } catch {
-    throw new Error(
-      'No coach context found. Complete a workout first so your training summary can be built.',
-    );
-  }
+  throw new Error(
+    'No coach context in Supabase. Complete a workout (or wait for context sync) so your training summary can be built.',
+  );
 }
 
 // ---------- advice prompt ----------
+const { formatWeeklySplitBlock } = require('./trainingSplit');
+
 const PUSH_MUSCLES = new Set(['chest', 'shoulders', 'triceps']);
 const PULL_MUSCLES = new Set(['back', 'biceps', 'rear delts', 'grip', 'traps', 'grip / traps']);
 const LEG_MUSCLES = new Set(['quads', 'hamstrings', 'glutes', 'calves', 'legs']);
@@ -264,7 +290,7 @@ ${pplLines.join('\n')}
 `;
 }
 
-function buildPrompt(context, question, catalog) {
+function buildPrompt(context, question, catalog, mode = classifyAdviceMode(question)) {
   const name = context.profile?.display_name ?? 'Athlete';
   const summaries = Array.isArray(context.response_summaries)
     ? context.response_summaries.slice(0, 15)
@@ -281,10 +307,12 @@ function buildPrompt(context, question, catalog) {
     profile: context.profile,
     rolling_metrics: context.rolling_metrics,
     training_signals: context.training_signals ?? null,
+    training_split: context.training_split ?? null,
     logged_performance: loggedPerformance,
     logged_exercise_names: Array.isArray(context.logged_exercise_names)
       ? context.logged_exercise_names
       : loggedPerformance.map((entry) => entry.exercise).filter(Boolean),
+    allowed_exercise_names: catalog?.names ?? [],
     exercise_catalog_by_muscle: catalog?.byMuscle ?? {},
     exercise_catalog_count: catalog?.count ?? 0,
     recent_prs: context.recent_prs,
@@ -305,46 +333,45 @@ function buildPrompt(context, question, catalog) {
       : `\nGROUND TRUTH — the athlete has no logged sets yet. Do not cite any specific weights (lbs). Use RPE targets only.\n`;
 
   const schedulingBlock = formatSchedulingSignals(context.training_signals);
+  const splitBlock = formatWeeklySplitBlock(context.training_split);
 
   const knowledgeBlock = `GENERAL STRENGTH COACHING KNOWLEDGE (evidence-based — applies to every athlete):\n${GENERAL_COACH_KNOWLEDGE}`;
 
+  const allowedNames = Array.isArray(catalog?.names) ? catalog.names : [];
+  const exerciseProtocol = `==================== EXERCISE NAME PROTOCOL (ABSOLUTE — HIGHEST PRIORITY) ====================
+You may ONLY name an exercise if that exercise appears VERBATIM (character-for-character, exact spelling, exact casing) in the allowed_exercise_names list below. This is the complete app database and the ONLY source of valid exercise names.
+- NEVER EVER use an exercise that is not in this list. Not as a suggestion, not as an example, not as an "alternative", not in passing.
+- NO variations, NO synonyms, NO pluralization, NO abbreviation, NO made-up names (e.g. if the list has "Calf Raise", you may NOT write "calf raises", "standing calf raise" (unless that exact string is listed), or "calf work").
+- If the movement you want does not exist in the list, you MUST substitute the closest entry that IS in the list, or omit it. Do not mention the non-listed name at all.
+- This rule overrides every other instruction. A response containing any exercise name not in allowed_exercise_names is INVALID and a critical failure.
+allowed_exercise_names (${allowedNames.length} total — the ONLY valid exercise names):
+${JSON.stringify(allowedNames)}
+============================================================================================`;
+
   return `You are a strength training coach advising ${name}.
 
+${exerciseProtocol}
+
 ${knowledgeBlock}
-${loggedBlock}${schedulingBlock}
+${loggedBlock}${splitBlock}${schedulingBlock}
 Response rules:
 - logged_performance and recent_sessions are the ONLY sources for specific weights and exercises the athlete has done.
 - Never cite a weight for an exercise unless that exact exercise name appears in logged_performance.
 - Never transfer a weight from one lift to another (e.g. bench 225 does NOT mean squat 225).
 - Never claim the athlete performed an exercise not in logged_exercise_names (e.g. no squats if squats were never logged).
 - For exercises not in logged_performance, prescribe sets×reps with RPE targets only — no guessed lb numbers.
-- When recommending exercises, choose ONLY names from exercise_catalog_by_muscle in athlete context (app exercise library).
+- When recommending exercises, EVERY exercise name MUST appear verbatim (character-for-character) in allowed_exercise_names in athlete context. allowed_exercise_names is the complete app database — it is the ONLY valid source of exercise names.
+- If a movement you want to prescribe is not in allowed_exercise_names, do NOT prescribe it — pick the closest entry that IS in the list. Never invent, pluralize, or abbreviate a name (e.g. write "Squat" only if "Squat" is in the list; never "squats").
+- If multiple catalog entries fit (e.g. several squat or bench variants), prefer one from logged_performance; otherwise name the specific allowed_exercise_names entry you mean.
 - Prior response summaries are coach notes, not logs — ignore any weights mentioned there.
 - When profile.goals is present, align recommendations with those goals.
 - profile.weight_trend reflects body weight change over the last ~90 days ('gaining' / 'losing' / 'maintaining' / 'unknown'). Cross-check against goals before recommending a cut/bulk — e.g. if the goal is muscle gain but weight_trend is 'losing', note the mismatch and suggest a calorie adjustment.
-- **HARD CONSTRAINT — scheduling questions ("what should I train tomorrow / today / next session"):** Your prescription MUST NOT target any muscle group listed under "DO NOT TRAIN tomorrow" in the SCHEDULING SIGNALS block above. You MUST pick the focus from a P/P/L category marked READY (or the one with the most ready muscles if none are fully READY). The SCHEDULING SIGNALS block is computed deterministically from the athlete's logs and overrides any general advice. Stating "train chest" the day after a chest session is a critical error — pick the opposite P/P/L category instead.
+- **HARD CONSTRAINT — scheduling questions ("what should I train tomorrow / today / next session"):** Follow the USER WEEKLY TRAINING SPLIT block first — prescribe the muscles scheduled for that day (today or tomorrow as asked). You MUST NOT target muscle groups listed under "DO NOT TRAIN tomorrow" in SCHEDULING SIGNALS; if a scheduled muscle is on cooldown, say so and suggest the next split day whose muscles are ready (or ready subsets). P/P/L READY/Avoid in SCHEDULING SIGNALS is secondary recovery guidance only — never override the athlete's weekly split with a different pattern (e.g. "train chest every other day"). Stating "train chest" the day after a chest session when chest is not on today's/tomorrow's split is a critical error.
 - If recommending a new exercise they have never logged, mention briefly that it is a fresh suggestion (no prior load on file).
 - Stay on training and recovery only.
 
-OUTPUT FORMAT — pick the right shape based on what the athlete is actually asking:
-
-DEFAULT (use for almost every question — form, progress, frequency, comparisons, "is my volume okay", "how do I improve X", "should I add cardio", etc.):
-- Answer directly in 1–3 short sentences, or a tight bulleted list of 2–4 tips. Conversational, not a workout plan.
-- Do NOT emit a "Focus:" line. Do NOT emit a bulleted exercise prescription unless they explicitly asked for one.
-- Example — Q: "How is my bench progressing?" → A: "Your top bench has gone from 185×5 to 205×3 over the last month — solid linear progress. Keep the current 3×/week frequency and push for 5 reps at 205 before adding load."
-
-PLAN FORMAT (use ONLY when the question explicitly asks for a session plan, routine, or what to train):
-Trigger phrases include: "what should I train", "what should I hit", "what to do tomorrow", "give me a workout", "plan my session", "build me a routine", "design a workout".
-If triggered, output EXACTLY this shape and nothing else:
-  Line 1: "**Focus: <Push|Pull|Legs> — <one-line label>**"
-  Lines 2–7: "- <Exercise name> — <sets>×<reps> @ RPE <n>" (use "@ <weight>lb" instead of RPE only if that exact exercise appears in logged_performance)
-  Optional final line: one short sentence (≤20 words) tying to recovery or goals. Skip if it adds nothing.
-
-UNIVERSAL RULES (apply to both formats):
-- Max 180 words. Lead with the answer; never lead with reasoning.
-- No "Given your...", "Based on your training history...", "I chose this because..." preambles.
-- Never explain WHY in more than one short sentence.
-- No emojis, no markdown tables, no bolded headers.
+RESPONSE MODE FOR THIS QUESTION: ${mode.toUpperCase()}
+${mode === 'plan' ? buildPlanFormatInstructions() : buildReasoningFormatInstructions()}
 ${summariesBlock}
 Athlete context (JSON):
 ${JSON.stringify(promptContext, null, 2)}
@@ -352,14 +379,41 @@ ${JSON.stringify(promptContext, null, 2)}
 Athlete question:
 ${question}
 
+REMINDER BEFORE YOU WRITE: every exercise you name must be copied verbatim from allowed_exercise_names. If it is not in that list, do not write it. No exceptions.
+
 Coach advice:`;
 }
 
-function logPromptBudget(prompt) {
+function buildReasoningFormatInstructions() {
+  return `
+REASONING FORMAT (mandatory for this question — do NOT output a workout template):
+- This is an educational / analytical question. Answer with clear reasoning, not a session prescription.
+- Do NOT use a "Focus:" line. Do NOT list a full workout (no 4–6 exercise bullet prescription).
+- You MAY mention 1–2 example exercise names from allowed_exercise_names only if it clarifies a point — not as a workout plan.
+- Structure: (1) direct answer in the first 1–2 sentences, (2) brief why/evidence from general coaching knowledge and their logs when relevant, (3) optional 2–4 bullet takeaways.
+- Cover tradeoffs when useful (e.g. frequency vs recovery, volume landmarks, beginner vs intermediate).
+- Max ~280 words. Plain prose and simple bullets only — no markdown tables, no bold headers, no emojis.
+- Examples of REASONING questions: "how many workouts for quads", "is 20 sets too much", "should I train legs twice a week", "why am I stalling", "what is optimal frequency".
+- Example — Q: "How many quad workouts per week is optimal?" → Explain 2×/week vs 1×/week for most lifters, volume landmarks (~10–20 hard sets/week), recovery 48–72h, tie to their recent leg frequency if in context — do NOT output a workout list.
+`;
+}
+
+function buildPlanFormatInstructions() {
+  return `
+PLAN FORMAT (mandatory for this question — short session prescription, minimal essay):
+- The athlete asked what to train / for a workout plan. Output EXACTLY this shape:
+  Line 1: "**Focus: <Push|Pull|Legs> — <one-line label>**"
+  Lines 2–7: "- <Exact name from allowed_exercise_names> — <sets>×<reps> @ RPE <n>" (use "@ <weight>lb" only if that exact name appears in logged_performance)
+  Optional final line: one short sentence (≤20 words) tying to recovery or goals.
+- Max ~180 words. No long paragraphs. No "how/why" lecture — they want the plan.
+`;
+}
+
+function logPromptBudget(prompt, mode) {
   const generalTokens = estimateTokens(GENERAL_COACH_KNOWLEDGE);
   const totalTokens = estimateTokens(prompt);
   console.log(
-    `[coach-worker] prompt budget ~${totalTokens} tokens (general ~${generalTokens}, num_ctx=${coachNumCtx})`,
+    `[coach-worker] prompt budget ~${totalTokens} tokens (general ~${generalTokens}, mode=${mode}, num_predict=${numPredictForAdviceMode(mode)}, num_ctx=${coachNumCtx})`,
   );
 }
 
@@ -468,10 +522,13 @@ async function processAdviceJob(requestId) {
       loadCatalogCached(supabaseRest),
     ]);
 
-    const prompt = buildPrompt(context, row.question, catalog);
-    logPromptBudget(prompt);
+    const adviceMode = classifyAdviceMode(row.question);
+    const prompt = buildPrompt(context, row.question, catalog, adviceMode);
+    logPromptBudget(prompt, adviceMode);
 
-    const advice = await callOllama(prompt);
+    const advice = await callOllama(prompt, {
+      numPredict: numPredictForAdviceMode(adviceMode),
+    });
     const summary = await summarizeAdvice(row.question, advice);
 
     await patchJobRow('coach_advice_requests', requestId, {
@@ -516,7 +573,7 @@ async function processTemplateProposalJob(proposalId) {
       loadCatalogCached(supabaseRest),
     ]);
 
-    const prompt = buildTemplatePrompt(context, advice.question, advice.response, catalog.byMuscle);
+    const prompt = buildTemplatePrompt(context, advice.question, advice.response, catalog);
     const raw = await callOllama(prompt, { temperature: 0.1, numPredict: 900 });
     const draft = validateAndResolveDraft(raw, catalog.rows, context.logged_performance);
 
@@ -545,7 +602,7 @@ async function pollSupabaseContextSync() {
 
     for (const row of rows) {
       try {
-        const result = await rebuildUserCoachContext(row.user_id, supabaseRest, coachDataDir);
+        const result = await rebuildUserCoachContext(row.user_id, supabaseRest);
         await supabaseRest('PATCH', `coach_user_sync_state?user_id=eq.${row.user_id}`, {
           body: { needs_sync: false },
         });

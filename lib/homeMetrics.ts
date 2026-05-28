@@ -64,6 +64,11 @@ function computeStreak(workoutDates: string[]) {
   return streak;
 }
 
+export type WeightHistoryPoint = {
+  recordedAt: string;
+  weight: number;
+};
+
 export type HomeMetrics = {
   streakDays: number;
   workoutsThisWeek: number;
@@ -74,6 +79,8 @@ export type HomeMetrics = {
   predictedMax: number | null;
   predictedLiftName: string;
   predictedLiftExerciseId: string | null;
+  /** Full body-weight log series (oldest → newest), used by the graph widget. */
+  weightHistory: WeightHistoryPoint[];
 };
 
 export type FetchHomeMetricsOptions = {
@@ -93,6 +100,7 @@ export async function fetchHomeMetrics(
     predictedMax: null,
     predictedLiftName: 'Bench Press',
     predictedLiftExerciseId: null,
+    weightHistory: [],
   };
 
   const { data: userResult, error: userError } = await supabase.auth.getUser();
@@ -102,8 +110,8 @@ export async function fetchHomeMetrics(
 
   const userId = userResult.user.id;
   const weekStart = startOfWeek(new Date());
-  const weightCutoff = new Date();
-  weightCutoff.setDate(weightCutoff.getDate() - WEIGHT_TREND_WINDOW_DAYS);
+  const weightTrendCutoff = new Date();
+  weightTrendCutoff.setDate(weightTrendCutoff.getDate() - WEIGHT_TREND_WINDOW_DAYS);
 
   const [profileResult, workoutsResult, exercisesResult, weightLogsResult] = await Promise.all([
     supabase.from('profiles_with_age').select('weight').eq('id', userId).maybeSingle(),
@@ -116,7 +124,6 @@ export async function fetchHomeMetrics(
     supabase
       .from('body_weight_logs')
       .select('weight, recorded_at')
-      .gte('recorded_at', weightCutoff.toISOString())
       .order('recorded_at', { ascending: true }),
   ]);
 
@@ -164,12 +171,19 @@ export async function fetchHomeMetrics(
     predictedMax = bestEstimate > 0 ? bestEstimate : null;
   }
 
-  const weightSummary = summarizeWeightLogs(
-    (weightLogsResult.data ?? []).map((row) => ({
+  const allWeightLogs = (weightLogsResult.data ?? [])
+    .map((row): WeightHistoryPoint => ({
       weight: Number(row.weight),
       recordedAt: row.recorded_at,
-    })),
+    }))
+    .filter((row) => Number.isFinite(row.weight) && row.recordedAt);
+
+  // Trend summary still uses the 90-day window so the trend label / weight widget
+  // stay focused on recent change. The graph widget renders the full history.
+  const recentWeightLogs = allWeightLogs.filter(
+    (row) => new Date(row.recordedAt) >= weightTrendCutoff,
   );
+  const weightSummary = summarizeWeightLogs(recentWeightLogs);
 
   return {
     streakDays,
@@ -181,5 +195,6 @@ export async function fetchHomeMetrics(
     predictedMax,
     predictedLiftName,
     predictedLiftExerciseId,
+    weightHistory: allWeightLogs,
   };
 }

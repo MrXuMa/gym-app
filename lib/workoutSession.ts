@@ -2,10 +2,36 @@ import { supabase } from '@/lib/supabase';
 import { enqueueCoachContextSync } from '@/lib/coachContextSync';
 import {
   clearActiveWorkoutCache,
+  clearWorkoutExerciseOrder,
   getActiveWorkoutCache,
+  getWorkoutExerciseOrder,
   saveActiveWorkoutCache,
+  saveWorkoutExerciseOrder,
   type ActiveWorkoutCache,
 } from '@/lib/workoutSessionStorage';
+
+function mergeExerciseOrder(idPool: string[], preferredOrder: string[] | null): string[] {
+  if (!preferredOrder?.length) {
+    return idPool;
+  }
+
+  const result: string[] = [];
+  const pool = new Set(idPool);
+
+  for (const id of preferredOrder) {
+    if (pool.has(id) && !result.includes(id)) {
+      result.push(id);
+    }
+  }
+
+  for (const id of idPool) {
+    if (!result.includes(id)) {
+      result.push(id);
+    }
+  }
+
+  return result;
+}
 
 export const MAX_SETS_PER_EXERCISE = 15;
 
@@ -139,6 +165,19 @@ export async function cancelActiveWorkoutSession(workoutId: string): Promise<voi
   }
 
   await clearActiveWorkoutCache();
+  await clearWorkoutExerciseOrder(workoutId);
+}
+
+export async function reorderWorkoutExercises(workoutId: string, exerciseIds: string[]): Promise<void> {
+  await saveWorkoutExerciseOrder(workoutId, exerciseIds);
+
+  const cache = await getActiveWorkoutCache();
+  if (cache?.workoutId === workoutId) {
+    await saveActiveWorkoutCache({
+      ...cache,
+      exerciseIds,
+    });
+  }
 }
 
 export async function addExerciseToActiveSession(workoutId: string, exerciseId: string): Promise<void> {
@@ -217,20 +256,24 @@ export async function loadWorkoutSession(
     setsByExercise.set(log.exercise_id, sets);
   }
 
-  const orderedExerciseIds: string[] = [];
   const cacheIds = useActiveCache && cache?.workoutId === workoutId ? cache.exerciseIds : [];
+  const idPool: string[] = [];
 
   for (const exerciseId of cacheIds) {
-    if (!orderedExerciseIds.includes(exerciseId)) {
-      orderedExerciseIds.push(exerciseId);
+    if (!idPool.includes(exerciseId)) {
+      idPool.push(exerciseId);
     }
   }
 
   for (const exerciseId of setsByExercise.keys()) {
-    if (!orderedExerciseIds.includes(exerciseId)) {
-      orderedExerciseIds.push(exerciseId);
+    if (!idPool.includes(exerciseId)) {
+      idPool.push(exerciseId);
     }
   }
+
+  const persistedOrder = await getWorkoutExerciseOrder(workoutId);
+  const preferredOrder = cacheIds.length > 0 ? cacheIds : persistedOrder;
+  const orderedExerciseIds = mergeExerciseOrder(idPool, preferredOrder);
 
   const exercises: SessionExercise[] = orderedExerciseIds.map((exerciseId) => {
     const meta = exerciseMap.get(exerciseId);
@@ -435,6 +478,11 @@ export async function endActiveWorkoutSession(workoutId: string, startedAt: stri
 
   if (error) {
     throw error;
+  }
+
+  const cache = await getActiveWorkoutCache();
+  if (cache?.workoutId === workoutId && cache.exerciseIds.length > 0) {
+    await saveWorkoutExerciseOrder(workoutId, cache.exerciseIds);
   }
 
   await clearActiveWorkoutCache();

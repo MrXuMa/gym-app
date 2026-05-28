@@ -2,22 +2,24 @@
  * Rebuild coach_context for one user from bounded Supabase queries.
  * Used by the Supabase pull worker — workout/profile data is rebuilt from source;
  * advice memory (response_summaries, last_advice, coach_notes) is preserved.
+ *
+ * Durable storage: coach_context.context in Supabase only (see coachContextLimits.js).
  */
 
-const fs = require('fs/promises');
 const { buildTrainingSignals } = require('./trainingSignals');
+const { buildTrainingSplitContext } = require('./trainingSplit');
+const {
+  MAX_COACH_NOTES,
+  MAX_METRICS_WORKOUTS,
+  MAX_RECENT_SESSIONS,
+  MAX_RESPONSE_SUMMARIES,
+  WEIGHT_WINDOW_DAYS,
+} = require('./coachContextLimits');
 const {
   buildLoggedPerformance,
   buildLoggedExerciseNames,
   summarizeWeightLogs,
-  WEIGHT_WINDOW_DAYS,
 } = require('./contextHelpers');
-
-const MAX_RECENT_SESSIONS = 10;
-const MAX_METRICS_WORKOUTS = 30;
-const MAX_RESPONSE_SUMMARIES = 25;
-const MAX_COACH_NOTES = 5;
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 function epley(weight, reps) {
   if (!weight || !reps || weight <= 0 || reps <= 0) return 0;
@@ -160,13 +162,12 @@ async function upsertCoachContext(userId, context, supabaseRest) {
 /**
  * @param {string} userId
  * @param {(method: string, path: string, opts?: object) => Promise<unknown>} supabaseRest
- * @param {string} coachDataDir
  */
-async function rebuildUserCoachContext(userId, supabaseRest, coachDataDir) {
+async function rebuildUserCoachContext(userId, supabaseRest) {
   const weightCutoff = new Date();
   weightCutoff.setDate(weightCutoff.getDate() - WEIGHT_WINDOW_DAYS);
 
-  const [profiles, recentWorkouts, previousRows, weightLogs] = await Promise.all([
+  const [profiles, recentWorkouts, previousRows, weightLogs, splitRows] = await Promise.all([
     supabaseRest(
       'GET',
       `profiles?id=eq.${userId}&select=username,first_name,last_name,weight,goals&limit=1`,
@@ -182,9 +183,15 @@ async function rebuildUserCoachContext(userId, supabaseRest, coachDataDir) {
       'GET',
       `body_weight_logs?user_id=eq.${userId}&recorded_at=gte.${weightCutoff.toISOString()}&select=weight,recorded_at&order=recorded_at.asc`,
     ).catch(() => []),
+    supabaseRest(
+      'GET',
+      `split_information?user_id=eq.${userId}&select=schedule&limit=1`,
+    ).catch(() => []),
   ]);
 
   const profile = profiles[0] ?? {};
+  const splitSchedule = splitRows[0]?.schedule ?? null;
+  const trainingSplit = buildTrainingSplitContext(splitSchedule);
   const previousContext = previousRows[0]?.context ?? {};
   const sessionWorkouts = recentWorkouts.slice(0, MAX_RECENT_SESSIONS);
   const sessionIds = sessionWorkouts.map((w) => w.id);
@@ -253,20 +260,16 @@ async function rebuildUserCoachContext(userId, supabaseRest, coachDataDir) {
     logged_performance: buildLoggedPerformance(recentSessions),
     logged_exercise_names: buildLoggedExerciseNames(recentSessions),
     training_signals: buildTrainingSignals(recentSessions),
+    training_split: trainingSplit,
     flags: previousContext.flags ?? [],
     response_summaries: normalizeResponseSummaries(previousContext),
     last_advice: normalizeLastAdvice(previousContext.last_advice),
     coach_notes: normalizeCoachNotes(previousContext.coach_notes),
   };
 
-  const baseDir = coachDataDir.replace(/\/$/, '');
-  const filePath = `${baseDir}/users/${userId}.json`;
-  await fs.mkdir(`${baseDir}/users`, { recursive: true });
-  await fs.writeFile(filePath, `${JSON.stringify(context, null, 2)}\n`, 'utf8');
-
   await upsertCoachContext(userId, context, supabaseRest);
 
-  return { userId, filePath, sessionCount: recentSessions.length };
+  return { userId, sessionCount: recentSessions.length };
 }
 
 module.exports = { rebuildUserCoachContext };

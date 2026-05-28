@@ -5,7 +5,7 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm install --omit=dev
 
-COPY server.js contextMerge.js contextHelpers.js coachGeneralKnowledge.js trainingSignals.js coachTemplate.js coachCatalogCache.js ./
+COPY server.js contextMerge.js contextHelpers.js coachContextLimits.js coachGeneralKnowledge.js trainingSignals.js coachTemplate.js coachCatalogCache.js ./
 
 ENV PORT=8080
 EXPOSE 8080

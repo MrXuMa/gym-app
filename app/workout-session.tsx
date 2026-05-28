@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchExerciseCatalog } from '@/lib/exercises';
 import { useScrollToDockedCard } from '@/hooks/useScrollToDockedCard';
 import {
@@ -8,17 +8,20 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
-  ScrollView,
-  StyleSheet,
   Text,
   View,
 } from 'react-native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { AppScreen } from '@/components/layout/AppScreen';
 import { AddExercisePicker, type ExerciseOption } from '@/components/workout-session/AddExercisePicker';
-import { ExerciseSessionCard } from '@/components/workout-session/ExerciseSessionCard';
+import { type DraggableExerciseListRef } from '@/components/workout-session/DraggableExerciseList';
 import { SessionTimer } from '@/components/workout-session/SessionTimer';
-import { SetEditorDock } from '@/components/workout-session/SetEditorDock';
+import { WorkoutExerciseEditorBody } from '@/components/workout-session/WorkoutExerciseEditorBody';
+import { createExerciseCardRenderer } from '@/components/workout-session/renderExerciseSessionCard';
+import {
+  WORKOUT_EDITOR_COPY,
+  workoutEditorStyles as styles,
+} from '@/components/workout-session/workoutEditorStyles';
 import { useDockedSetEditor } from '@/hooks/useDockedSetEditor';
 import {
   addExerciseToActiveSession,
@@ -27,6 +30,7 @@ import {
   getActiveWorkoutSession,
   loadWorkoutSession,
   removeExerciseFromSession,
+  reorderWorkoutExercises,
   type SessionExercise,
   type WorkoutSetLog,
 } from '@/lib/workoutSession';
@@ -45,8 +49,7 @@ export default function WorkoutSessionScreen() {
   const [discarding, setDiscarding] = useState(false);
   const [removingExerciseId, setRemovingExerciseId] = useState<string | null>(null);
   const [pickerVisible, setPickerVisible] = useState(false);
-  const scrollRef = useRef<ScrollView>(null);
-  const cardOffsetsRef = useRef<Record<string, number>>({});
+  const scrollRef = useRef<DraggableExerciseListRef>(null);
   const {
     editingExerciseId,
     setEditingExerciseId,
@@ -56,7 +59,8 @@ export default function WorkoutSessionScreen() {
     dockEditorActions,
   } = useDockedSetEditor();
 
-  useScrollToDockedCard(scrollRef, cardOffsetsRef, dockedExerciseId);
+  const exerciseIds = exercises.map((exercise) => exercise.id);
+  useScrollToDockedCard(scrollRef, { current: {} }, dockedExerciseId, exerciseIds);
 
   useEffect(() => {
     async function bootstrap() {
@@ -134,8 +138,8 @@ export default function WorkoutSessionScreen() {
         ];
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Could not add workout.';
-      Alert.alert('Could not add workout', message);
+      const message = error instanceof Error ? error.message : WORKOUT_EDITOR_COPY.addExerciseFailed;
+      Alert.alert('Could not add exercise', message);
     }
   }
 
@@ -150,8 +154,8 @@ export default function WorkoutSessionScreen() {
       await removeExerciseFromSession(workoutId, exerciseId);
       setExercises((current) => current.filter((exercise) => exercise.id !== exerciseId));
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Could not remove workout.';
-      Alert.alert('Could not remove workout', message);
+      const message = error instanceof Error ? error.message : WORKOUT_EDITOR_COPY.removeExerciseFailed;
+      Alert.alert('Could not remove exercise', message);
     } finally {
       setRemovingExerciseId(null);
     }
@@ -215,7 +219,37 @@ export default function WorkoutSessionScreen() {
     }
   }
 
-  const selectedExerciseIds = exercises.map((exercise) => exercise.id);
+  function handleReorderExercises(next: SessionExercise[]) {
+    setExercises(next);
+    if (!workoutId) {
+      return;
+    }
+
+    void reorderWorkoutExercises(
+      workoutId,
+      next.map((exercise) => exercise.id),
+    );
+  }
+
+  const renderExercise = useMemo(
+    () =>
+      createExerciseCardRenderer({
+        workoutId: workoutId ?? '',
+        editingExerciseId,
+        setEditingExerciseId,
+        handleDockedEditorChange,
+        handleSetsChange,
+        handleRemoveExercise,
+        removingExerciseId,
+      }),
+    [
+      workoutId,
+      editingExerciseId,
+      setEditingExerciseId,
+      handleDockedEditorChange,
+      removingExerciseId,
+    ],
+  );
 
   if (loading) {
     return (
@@ -229,7 +263,7 @@ export default function WorkoutSessionScreen() {
     return (
       <AppScreen title="Workout Session" showProfile={false}>
         <View style={styles.emptyState}>
-          <Text style={styles.emptyTitle}>No active workout session.</Text>
+          <Text style={styles.emptyStateTitle}>No active workout session.</Text>
           <Pressable style={styles.primaryButton} onPress={() => router.replace('/(tabs)/workouts')}>
             <Text style={styles.primaryButtonText}>Go to workouts</Text>
           </Pressable>
@@ -244,7 +278,7 @@ export default function WorkoutSessionScreen() {
       showProfile={false}
       headerRight={
         <Pressable
-          style={[styles.endButton, ending && styles.disabled]}
+          style={ending ? styles.disabled : undefined}
           disabled={ending}
           onPress={confirmEndWorkout}
           accessibilityRole="button"
@@ -253,7 +287,7 @@ export default function WorkoutSessionScreen() {
           {ending ? (
             <ActivityIndicator size="small" color={homeTheme.colors.danger} />
           ) : (
-            <Text style={styles.endButtonText}>End</Text>
+            <Text style={[styles.headerActionText, styles.headerActionDanger]}>End</Text>
           )}
         </Pressable>
       }
@@ -263,159 +297,31 @@ export default function WorkoutSessionScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 4 : 0}
       >
-        <SessionTimer title={workoutTitle} startedAt={startedAt} />
-
-        <ScrollView
-          ref={scrollRef}
-          style={styles.scrollView}
-          contentContainerStyle={[styles.scroll, dockedEditor && styles.scrollWithDock]}
-          showsVerticalScrollIndicator={false}
-          keyboardDismissMode="on-drag"
-          keyboardShouldPersistTaps="handled"
-        >
-          {exercises.length === 0 ? (
-            <Text style={styles.emptyExercises}>Add a workout to start logging sets.</Text>
-          ) : (
-            exercises.map((exercise) => (
-              <View
-                key={exercise.id}
-                onLayout={(event) => {
-                  cardOffsetsRef.current[exercise.id] = event.nativeEvent.layout.y;
-                }}
-              >
-                <ExerciseSessionCard
-                  workoutId={workoutId}
-                  exercise={exercise}
-                  editingExerciseId={editingExerciseId}
-                  onEditingExerciseIdChange={setEditingExerciseId}
-                  onDockedEditorChange={(payload) => handleDockedEditorChange(exercise.id, payload)}
-                  removing={removingExerciseId === exercise.id}
-                  onSetsChange={handleSetsChange}
-                  onRemove={() => handleRemoveExercise(exercise.id)}
-                />
-              </View>
-            ))
-          )}
-        </ScrollView>
-
-        {dockedEditor ? <SetEditorDock {...dockedEditor} {...dockEditorActions} /> : null}
-
-        <View style={styles.footer}>
-          <Pressable style={styles.addWorkoutButton} onPress={() => setPickerVisible(true)}>
-            <Text style={styles.addWorkoutText}>Add workout</Text>
-          </Pressable>
-          <Pressable
-            style={[styles.discardButton, discarding && styles.disabled]}
-            disabled={discarding}
-            onPress={confirmDiscardSession}
-            accessibilityRole="button"
-            accessibilityLabel="Discard session"
-          >
-            {discarding ? (
-              <ActivityIndicator size="small" color={homeTheme.colors.danger} />
-            ) : (
-              <Text style={styles.discardButtonText}>Discard session</Text>
-            )}
-          </Pressable>
-        </View>
+        <WorkoutExerciseEditorBody
+          exercises={exercises}
+          onReorder={handleReorderExercises}
+          onAddExercise={() => setPickerVisible(true)}
+          scrollRef={scrollRef}
+          renderExercise={renderExercise}
+          dockedEditor={dockedEditor}
+          dockEditorActions={dockEditorActions}
+          header={<SessionTimer title={workoutTitle} startedAt={startedAt} />}
+          secondaryAction={{
+            label: 'Discard session',
+            onPress: confirmDiscardSession,
+            loading: discarding,
+            accessibilityLabel: 'Discard session',
+          }}
+        />
       </KeyboardAvoidingView>
 
       <AddExercisePicker
         visible={pickerVisible}
         exercises={allExercises}
-        selectedExerciseIds={selectedExerciseIds}
+        selectedExerciseIds={exerciseIds}
         onClose={() => setPickerVisible(false)}
         onSelect={handleAddExercise}
       />
     </AppScreen>
   );
 }
-
-const styles = StyleSheet.create({
-  loader: {
-    marginTop: 48,
-  },
-  body: {
-    flex: 1,
-  },
-  scrollView: {
-    flex: 1,
-  },
-  scroll: {
-    paddingHorizontal: homeTheme.spacing.screen,
-    paddingBottom: 24,
-  },
-  scrollWithDock: {
-    paddingBottom: 8,
-  },
-  footer: {
-    paddingHorizontal: homeTheme.spacing.screen,
-    paddingBottom: 12,
-    paddingTop: 8,
-    gap: 10,
-  },
-  emptyExercises: {
-    color: homeTheme.colors.textMuted,
-    fontSize: 14,
-    marginBottom: 16,
-    lineHeight: 20,
-  },
-  addWorkoutButton: {
-    backgroundColor: homeTheme.colors.navYellow,
-    borderRadius: homeTheme.radius.button,
-    paddingVertical: 14,
-    alignItems: 'center',
-  },
-  addWorkoutText: {
-    color: homeTheme.colors.tabBar,
-    fontWeight: '800',
-    fontSize: 15,
-    letterSpacing: 0.5,
-    textTransform: 'uppercase',
-  },
-  discardButton: {
-    paddingVertical: 4,
-    alignSelf: 'flex-start',
-  },
-  discardButtonText: {
-    color: homeTheme.colors.danger,
-    fontWeight: '600',
-    fontSize: 13,
-  },
-  endButton: {
-    minWidth: 52,
-    alignItems: 'flex-end',
-    justifyContent: 'center',
-    paddingVertical: 4,
-  },
-  endButtonText: {
-    color: homeTheme.colors.danger,
-    fontWeight: '700',
-    fontSize: 15,
-  },
-  emptyState: {
-    flex: 1,
-    justifyContent: 'center',
-    paddingHorizontal: homeTheme.spacing.screen,
-    gap: 16,
-  },
-  emptyTitle: {
-    color: homeTheme.colors.textPrimary,
-    fontSize: 18,
-    fontWeight: '700',
-    textAlign: 'center',
-  },
-  primaryButton: {
-    backgroundColor: homeTheme.colors.navYellow,
-    borderRadius: homeTheme.radius.button,
-    paddingVertical: 14,
-    alignItems: 'center',
-  },
-  primaryButtonText: {
-    color: homeTheme.colors.tabBar,
-    fontWeight: '800',
-  },
-  disabled: {
-    opacity: 0.6,
-  },
-});

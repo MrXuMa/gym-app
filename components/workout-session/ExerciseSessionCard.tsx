@@ -11,6 +11,7 @@ import {
 } from '@/lib/workoutSession';
 import { homeTheme } from '@/constants/theme';
 import type { DockedSetEditorPayload } from '@/components/workout-session/SetEditorDock';
+import { WorkoutDragHandle } from '@/components/workout-session/WorkoutDragHandle';
 
 const CIRCLE_SIZE = 44;
 
@@ -21,6 +22,8 @@ type ExerciseSessionCardProps = {
   exercise: SessionExercise;
   localOnly?: boolean;
   removing?: boolean;
+  drag?: () => void;
+  isDragging?: boolean;
   editingExerciseId?: string | null;
   onEditingExerciseIdChange?: (exerciseId: string | null) => void;
   onDockedEditorChange: (payload: DockedSetEditorPayload | null) => void;
@@ -180,6 +183,8 @@ export function ExerciseSessionCard({
   exercise,
   localOnly = false,
   removing = false,
+  drag,
+  isDragging = false,
   editingExerciseId = null,
   onEditingExerciseIdChange,
   onDockedEditorChange,
@@ -481,7 +486,9 @@ export function ExerciseSessionCard({
   }
 
   return (
-    <View style={styles.card}>
+    <View style={styles.cardRow}>
+      {drag ? <WorkoutDragHandle onDrag={drag} disabled={removing} /> : null}
+      <View style={[styles.card, isDragging && styles.cardDragging, drag && styles.cardWithHandle]}>
       <WorkoutBlockHeader
         exercise={exercise}
         removing={removing}
@@ -533,18 +540,36 @@ export function ExerciseSessionCard({
           })}
         </ScrollView>
       ) : null}
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  cardRow: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    marginBottom: 12,
+  },
   card: {
+    flex: 1,
     borderWidth: 1,
     borderColor: homeTheme.colors.border,
     borderRadius: homeTheme.radius.card,
     backgroundColor: homeTheme.colors.card,
     padding: 14,
-    marginBottom: 12,
+  },
+  cardWithHandle: {
+    borderTopLeftRadius: 4,
+    borderBottomLeftRadius: 4,
+  },
+  cardDragging: {
+    borderColor: homeTheme.colors.primary,
+    shadowColor: homeTheme.colors.primary,
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 4,
   },
   header: {
     flexDirection: 'row',

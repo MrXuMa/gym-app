@@ -2,6 +2,7 @@ import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { MarkdownText } from '@/components/ui/MarkdownText';
 import type { CoachAdviceRequest, CoachAdviceStatus } from '@/lib/coach';
 import type { CoachTemplateProposalStatus } from '@/lib/coachTemplate';
 import { homeTheme } from '@/constants/theme';
@@ -110,7 +111,7 @@ export function CoachAdviceCard({
       <Text style={styles.question}>{request.question}</Text>
 
       {request.status === 'completed' && request.response ? (
-        <Text style={styles.response}>{request.response}</Text>
+        <MarkdownText style={styles.response}>{request.response}</MarkdownText>
       ) : null}
 
       {request.status === 'failed' && request.error ? (

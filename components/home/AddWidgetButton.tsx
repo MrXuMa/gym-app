@@ -1,16 +1,16 @@
-import { Alert, Pressable, StyleSheet } from 'react-native';
+import { Pressable, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { homeTheme } from '@/constants/theme';
 
-export function AddWidgetButton() {
-  function handlePress() {
-    Alert.alert('Coming soon', 'Custom widgets will be available in a future update.');
-  }
+type AddWidgetButtonProps = {
+  onPress: () => void;
+};
 
+export function AddWidgetButton({ onPress }: AddWidgetButtonProps) {
   return (
     <Pressable
-      style={styles.button}
-      onPress={handlePress}
+      style={({ pressed }) => [styles.button, pressed && styles.pressed]}
+      onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel="Add widget"
     >
@@ -29,5 +29,8 @@ const styles = StyleSheet.create({
     backgroundColor: homeTheme.colors.card,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  pressed: {
+    opacity: 0.7,
   },
 });

@@ -1,80 +1,109 @@
-import { ReactElement } from 'react';
-import { StyleSheet, View } from 'react-native';
-import { useRouter } from 'expo-router';
-import type { WidgetSize } from '@/components/home/widgetSizing';
-import type { HomeMetrics } from '@/lib/homeMetrics';
+import { Fragment } from 'react';
+import { Pressable, StyleSheet, View } from 'react-native';
 import { homeTheme } from '@/constants/theme';
-import { StreakWidget } from '@/components/home/widgets/StreakWidget';
-import { PredictedMaxWidget } from '@/components/home/widgets/PredictedMaxWidget';
-import { WeightTrendWidget } from '@/components/home/widgets/WeightTrendWidget';
-import { WeekSummaryWidget } from '@/components/home/widgets/WeekSummaryWidget';
+import type { HomeMetrics } from '@/lib/homeMetrics';
+import { type WidgetId } from '@/lib/widgetSettings';
+import {
+  getWidgetDefinition,
+  type WidgetCallbacks,
+  type WidgetDefinition,
+  type WidgetRenderResult,
+} from '@/components/home/widgetRegistry';
 
 type WidgetGridProps = {
   metrics: HomeMetrics;
-  onEditPredictedMax?: () => void;
+  enabledWidgetIds: WidgetId[];
+  callbacks: WidgetCallbacks;
+  movingWidgetId?: WidgetId | null;
+  onLongPressWidget: (definition: WidgetDefinition, rendered: WidgetRenderResult) => void;
 };
 
 const HOME_COLUMNS = 2;
 
-function chunkWidgets(widgets: ReactElement[], columns: number) {
-  const rows: ReactElement[][] = [];
+type LaidOutRow = {
+  cells: { definition: WidgetDefinition; rendered: WidgetRenderResult }[];
+  spanUsed: number;
+};
 
-  for (let index = 0; index < widgets.length; index += columns) {
-    rows.push(widgets.slice(index, index + columns));
+/**
+ * Greedy row builder: pack consecutive widgets into rows of `HOME_COLUMNS` columns,
+ * starting a new row whenever the next widget would overflow. A widthSpan-2 widget
+ * always sits on its own row.
+ */
+function layoutWidgets(
+  entries: { definition: WidgetDefinition; rendered: WidgetRenderResult }[],
+): LaidOutRow[] {
+  const rows: LaidOutRow[] = [];
+  let current: LaidOutRow | null = null;
+
+  for (const entry of entries) {
+    const span = entry.definition.widthSpan;
+    if (!current || current.spanUsed + span > HOME_COLUMNS) {
+      current = { cells: [], spanUsed: 0 };
+      rows.push(current);
+    }
+    current.cells.push(entry);
+    current.spanUsed += span;
   }
 
   return rows;
 }
 
-export function WidgetGrid({ metrics, onEditPredictedMax }: WidgetGridProps) {
-  const router = useRouter();
-  const widgetSize: WidgetSize = 'compact';
-  const minimal = true;
+export function WidgetGrid({
+  metrics,
+  enabledWidgetIds,
+  callbacks,
+  movingWidgetId = null,
+  onLongPressWidget,
+}: WidgetGridProps) {
+  const isMoveMode = movingWidgetId !== null;
+  const entries = enabledWidgetIds
+    .map((id) => {
+      const definition = getWidgetDefinition(id);
+      if (!definition) {
+        return null;
+      }
+      const rendered = definition.render({ metrics, callbacks });
+      return { definition, rendered };
+    })
+    .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
 
-  const widgets: ReactElement[] = [
-    <StreakWidget key="streak" size={widgetSize} minimal={minimal} streakDays={metrics.streakDays} />,
-    <PredictedMaxWidget
-      key="predicted-max"
-      size={widgetSize}
-      minimal={minimal}
-      liftName={metrics.predictedLiftName}
-      predictedMax={metrics.predictedMax}
-      onEdit={onEditPredictedMax}
-    />,
-    <WeightTrendWidget
-      key="weight"
-      size={widgetSize}
-      minimal={minimal}
-      currentWeight={metrics.currentWeight}
-      trendLabel={metrics.weightTrendLabel}
-      changeLbs={metrics.weightChangeLbs}
-      spanDays={metrics.weightTrendSpanDays}
-    />,
-    <WeekSummaryWidget
-      key="week"
-      size={widgetSize}
-      minimal={minimal}
-      workoutsThisWeek={metrics.workoutsThisWeek}
-      onPress={() => router.push('/workouts')}
-    />,
-  ];
-
-  const rows = chunkWidgets(widgets, HOME_COLUMNS);
+  const rows = layoutWidgets(entries);
 
   return (
     <View style={styles.grid}>
       {rows.map((row, rowIndex) => (
         <View key={`row-${rowIndex}`} style={styles.row}>
-          {row.map((widget, columnIndex) => (
-            <View
-              key={`cell-${rowIndex}-${columnIndex}`}
-              style={styles.homeCell}
+          {row.cells.map(({ definition, rendered }) => (
+            <Pressable
+              key={`cell-${definition.id}`}
+              style={({ pressed }) => [
+                styles.cell,
+                definition.widthSpan === 2 ? styles.fullCell : styles.halfCell,
+                movingWidgetId === definition.id && styles.cellMoving,
+                isMoveMode && movingWidgetId !== definition.id && styles.cellDimmed,
+                pressed && !isMoveMode && styles.cellPressed,
+              ]}
+              onPress={isMoveMode ? undefined : rendered.onPress}
+              onLongPress={isMoveMode ? undefined : () => onLongPressWidget(definition, rendered)}
+              delayLongPress={350}
+              disabled={isMoveMode}
+              accessibilityRole="button"
+              accessibilityLabel={
+                movingWidgetId === definition.id
+                  ? `${definition.title} widget selected for moving`
+                  : `${definition.title} widget. Long press to edit.`
+              }
             >
-              {widget}
-            </View>
+              {rendered.element}
+            </Pressable>
           ))}
-          {row.length < HOME_COLUMNS ? (
-            <View style={[styles.homeCell, styles.cellSpacer]} />
+          {row.spanUsed < HOME_COLUMNS ? (
+            <Fragment>
+              {Array.from({ length: HOME_COLUMNS - row.spanUsed }).map((_, idx) => (
+                <View key={`spacer-${rowIndex}-${idx}`} style={[styles.cell, styles.halfCell, styles.cellSpacer]} />
+              ))}
+            </Fragment>
           ) : null}
         </View>
       ))}
@@ -91,9 +120,26 @@ const styles = StyleSheet.create({
     alignItems: 'stretch',
     gap: 10,
   },
-  homeCell: {
-    flex: 1,
+  cell: {
     alignSelf: 'stretch',
+  },
+  halfCell: {
+    flex: 1,
+  },
+  fullCell: {
+    flexBasis: '100%',
+    flexGrow: 1,
+  },
+  cellPressed: {
+    opacity: 0.85,
+  },
+  cellMoving: {
+    borderWidth: 2,
+    borderColor: homeTheme.colors.primary,
+    borderRadius: homeTheme.radius.card,
+  },
+  cellDimmed: {
+    opacity: 0.55,
   },
   cellSpacer: {
     opacity: 0,

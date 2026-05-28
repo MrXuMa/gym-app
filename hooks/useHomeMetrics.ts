@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
 import { fetchHomeMetrics, type HomeMetrics } from '@/lib/homeMetrics';
-import { loadWidgetSettings, updateWidgetSettings, type WidgetSettings } from '@/lib/widgetSettings';
+import {
+  disableWidget,
+  enableWidget,
+  loadWidgetSettings,
+  moveWidgetInOrder,
+  reorderEnabledWidgets,
+  updateWidgetSettings,
+  DEFAULT_ENABLED_WIDGET_IDS,
+  type WidgetId,
+  type WidgetSettings,
+} from '@/lib/widgetSettings';
 
 const EMPTY: HomeMetrics = {
   streakDays: 0,
@@ -12,10 +22,12 @@ const EMPTY: HomeMetrics = {
   predictedMax: null,
   predictedLiftName: 'Bench Press',
   predictedLiftExerciseId: null,
+  weightHistory: [],
 };
 
 const EMPTY_SETTINGS: WidgetSettings = {
   predictedMaxExerciseId: null,
+  enabledWidgetIds: DEFAULT_ENABLED_WIDGET_IDS,
 };
 
 export function useHomeMetrics() {
@@ -60,6 +72,31 @@ export function useHomeMetrics() {
     [loadWith],
   );
 
+  const addWidget = useCallback(async (id: WidgetId) => {
+    const next = await enableWidget(id);
+    setSettings(next);
+  }, []);
+
+  const removeWidget = useCallback(async (id: WidgetId) => {
+    const next = await disableWidget(id);
+    setSettings(next);
+  }, []);
+
+  const moveWidget = useCallback(async (id: WidgetId, direction: 'up' | 'down') => {
+    const reordered = moveWidgetInOrder(settings.enabledWidgetIds, id, direction);
+    if (reordered === settings.enabledWidgetIds) {
+      return;
+    }
+
+    const next = await reorderEnabledWidgets(reordered);
+    setSettings(next);
+  }, [settings.enabledWidgetIds]);
+
+  const reorderWidgets = useCallback(async (orderedIds: WidgetId[]) => {
+    const next = await reorderEnabledWidgets(orderedIds);
+    setSettings(next);
+  }, []);
+
   return {
     metrics,
     settings,
@@ -67,5 +104,9 @@ export function useHomeMetrics() {
     refreshing,
     refresh,
     setPredictedMaxExerciseId,
+    addWidget,
+    removeWidget,
+    moveWidget,
+    reorderWidgets,
   };
 }

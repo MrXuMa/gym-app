@@ -27,7 +27,8 @@ Fix: sync the full `vm/coach-worker/` tree to `/opt/coach-stack/coach-api/`, con
 | File | Purpose |
 |------|---------|
 | `server.js` | Supabase pull worker (advice + template + context-sync queues) + Ollama client + health endpoints |
-| `contextMerge.js` | Rebuild one user's `coach_context` row from bounded Supabase queries |
+| `contextMerge.js` | Rebuild one user's `coach_context` row from bounded Supabase queries (Supabase-only; no per-user files on disk) |
+| `coachContextLimits.js` | Tunable caps: recent sessions, metrics window, advice summaries, weight log days |
 | `contextHelpers.js` | Pure helpers: logged-performance allowlist, summary sanitizer, 90-day weight-trend summary |
 | `trainingSignals.js` | Muscle recovery / readiness hints from `recent_sessions` |
 | `coachGeneralKnowledge.js` | Shared evidence-based lifting knowledge (same for every user) |
@@ -44,9 +45,9 @@ Fix: sync the full `vm/coach-worker/` tree to `/opt/coach-stack/coach-api/`, con
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `OLLAMA_HOST` (default `http://ollama:11434`)
 - `MODEL_NAME` (default `llama3.1:8b`)
-- `COACH_DATA_DIR` (default `/data/coach`)
 - `COACH_NUM_CTX` (default `8192`) — Ollama context window
-- `COACH_NUM_PREDICT` (default `350`) — max tokens generated per advice job (hard ceiling so the model can't ramble; raise temporarily if users ask for a full program outline)
+- `COACH_NUM_PREDICT` (default `350`) — max tokens for **session-plan** advice (Focus + exercise list)
+- `COACH_NUM_PREDICT_REASONING` (default `520`) — max tokens for **reasoning / education** answers (how many sets, optimal frequency, why, should I, etc.)
 - `COACH_CATALOG_TTL_MS` (default `600000` = 10 min) — exercise catalog cache TTL. Lower for faster reflection of new exercises added via SQL; higher for less Supabase traffic.
 
 ## Context token budget (RTX 2060 Super 8GB, llama3.1:8b Q4)
@@ -65,6 +66,13 @@ Ollama’s default `num_ctx` is often **2048**, which truncates long prompts and
 After deploy, logs show: `prompt budget ~NNNN tokens (general ~MMMM, num_ctx=8192)`.
 
 If advice jobs fail with CUDA OOM, set `COACH_NUM_CTX=6144` in compose.
+
+## Coach context storage
+
+- **Source of truth:** `coach_context.context` JSON in Supabase (one row per user).
+- **Rebuild:** context-sync queue → `contextMerge.js` (bounded queries; limits in `coachContextLimits.js`).
+- **Advice jobs:** read context from Supabase, build prompt in memory, write response back to Supabase — no per-user JSON on the VM.
+- **Legacy:** `COACH_DATA_DIR` / `/data/coach/users/*.json` removed; remove any bind mount that only existed for those files.
 
 ## Prompt layers
 

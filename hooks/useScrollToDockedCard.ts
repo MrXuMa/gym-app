@@ -1,14 +1,27 @@
 import { useEffect, type RefObject } from 'react';
-import type { ScrollView } from 'react-native';
+import type { FlatList, ScrollView } from 'react-native';
+
+type ScrollableList = ScrollView | FlatList<unknown>;
 
 export function useScrollToDockedCard(
-  scrollRef: RefObject<ScrollView | null>,
+  scrollRef: RefObject<ScrollableList | null>,
   cardOffsetsRef: RefObject<Record<string, number>>,
   dockedExerciseId: string | null,
+  exerciseIds?: string[],
 ) {
   useEffect(() => {
     if (!dockedExerciseId || !scrollRef.current) {
       return;
+    }
+
+    const list = scrollRef.current;
+
+    if (exerciseIds?.length && 'scrollToIndex' in list) {
+      const index = exerciseIds.indexOf(dockedExerciseId);
+      if (index >= 0) {
+        list.scrollToIndex({ index, viewOffset: 12, animated: true });
+        return;
+      }
     }
 
     const offset = cardOffsetsRef.current[dockedExerciseId];
@@ -16,6 +29,13 @@ export function useScrollToDockedCard(
       return;
     }
 
-    scrollRef.current.scrollTo({ y: Math.max(0, offset - 12), animated: true });
-  }, [cardOffsetsRef, dockedExerciseId, scrollRef]);
+    const y = Math.max(0, offset - 12);
+
+    if ('scrollToOffset' in list) {
+      list.scrollToOffset({ offset: y, animated: true });
+      return;
+    }
+
+    list.scrollTo({ y, animated: true });
+  }, [cardOffsetsRef, dockedExerciseId, exerciseIds, scrollRef]);
 }

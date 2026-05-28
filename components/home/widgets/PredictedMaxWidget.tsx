@@ -1,5 +1,4 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { StyleSheet, Text } from 'react-native';
 import { getWidgetSizing, type WidgetSize } from '@/components/home/widgetSizing';
 import { homeTheme } from '@/constants/theme';
 import { WEIGHT_UNIT_LABEL } from '@/constants/units';
@@ -10,7 +9,6 @@ type PredictedMaxWidgetProps = {
   minimal?: boolean;
   liftName: string;
   predictedMax: number | null;
-  onEdit?: () => void;
 };
 
 export function PredictedMaxWidget({
@@ -18,7 +16,6 @@ export function PredictedMaxWidget({
   minimal = false,
   liftName,
   predictedMax,
-  onEdit,
 }: PredictedMaxWidgetProps) {
   const sizing = getWidgetSizing(size, minimal);
   const displayValue = predictedMax != null ? `${predictedMax} ${WEIGHT_UNIT_LABEL}` : '—';
@@ -27,7 +24,7 @@ export function PredictedMaxWidget({
       ? `Estimated 1RM for ${liftName}.`
       : `Log sets for ${liftName} to estimate your max.`;
 
-  const content = (
+  return (
     <WidgetCard title="Predicted max" size={size} minimal={minimal}>
       <Text style={[styles.value, { fontSize: sizing.valueFontSize }]} numberOfLines={1}>
         {displayValue}
@@ -43,48 +40,11 @@ export function PredictedMaxWidget({
           {subtext}
         </Text>
       ) : null}
-      {onEdit ? (
-        <Pressable
-          style={styles.editHint}
-          onPress={onEdit}
-          hitSlop={8}
-          accessibilityRole="button"
-          accessibilityLabel="Change predicted max exercise"
-        >
-          <Ionicons
-            name="create-outline"
-            size={minimal ? 12 : 14}
-            color={homeTheme.colors.mutedForeground}
-          />
-        </Pressable>
-      ) : null}
     </WidgetCard>
-  );
-
-  if (!onEdit) {
-    return content;
-  }
-
-  return (
-    <Pressable
-      style={({ pressed }) => [styles.pressable, pressed && styles.pressed]}
-      onLongPress={onEdit}
-      delayLongPress={350}
-      accessibilityRole="button"
-      accessibilityLabel="Predicted max widget. Long press to change exercise."
-    >
-      {content}
-    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  pressable: {
-    flex: 1,
-  },
-  pressed: {
-    opacity: 0.85,
-  },
   value: {
     color: homeTheme.colors.foreground,
     fontWeight: '700',
@@ -104,12 +64,5 @@ const styles = StyleSheet.create({
   subtext: {
     color: homeTheme.colors.mutedForeground,
     marginTop: 6,
-  },
-  editHint: {
-    position: 'absolute',
-    top: 6,
-    right: 6,
-    padding: 4,
-    opacity: 0.55,
   },
 });

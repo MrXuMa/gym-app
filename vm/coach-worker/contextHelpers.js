@@ -5,7 +5,7 @@
  *   - summarizeWeightLogs                                — 90-day body weight trend
  */
 
-const WEIGHT_WINDOW_DAYS = 90;
+const { WEIGHT_WINDOW_DAYS } = require('./coachContextLimits');
 const WEIGHT_MIN_SPAN_DAYS = 14;
 const WEIGHT_THRESHOLD_LBS = 2;
 const WEIGHT_MAX_HISTORY_POINTS = 12;

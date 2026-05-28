@@ -104,6 +104,7 @@ export default function RootLayout() {
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="profile" />
           <Stack.Screen name="goals" />
+          <Stack.Screen name="training-split" />
           <Stack.Screen name="exercises" />
           <Stack.Screen
             name="modal"

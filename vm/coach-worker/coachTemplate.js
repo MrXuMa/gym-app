@@ -32,35 +32,14 @@ function buildCatalogIndex(exercises) {
   return { byExact, all };
 }
 
+/** Only exact catalog names match — no fuzzy "squats" → random squat variant. */
 function resolveExerciseName(name, catalogIndex) {
   const trimmed = String(name ?? '').trim();
   if (!trimmed) {
     return null;
   }
 
-  const key = normalizeName(trimmed);
-  const exact = catalogIndex.byExact.get(key);
-  if (exact) {
-    return exact;
-  }
-
-  const containsMatches = catalogIndex.all.filter((entry) => {
-    const entryKey = normalizeName(entry.name);
-    return entryKey.includes(key) || key.includes(entryKey);
-  });
-
-  if (containsMatches.length === 1) {
-    return containsMatches[0];
-  }
-
-  if (containsMatches.length > 1) {
-    const wordMatch = containsMatches.find((entry) => normalizeName(entry.name) === key);
-    if (wordMatch) {
-      return wordMatch;
-    }
-  }
-
-  return null;
+  return catalogIndex.byExact.get(normalizeName(trimmed)) ?? null;
 }
 
 function loggedWeightForExercise(exerciseName, loggedPerformance) {
@@ -92,40 +71,54 @@ function extractJsonObject(text) {
   }
 }
 
-function buildTemplatePrompt(context, question, advice, catalogByMuscle) {
-  const catalog = catalogByMuscle ?? {};
+function buildTemplatePrompt(context, question, advice, catalog) {
+  const catalogByMuscle = catalog?.byMuscle ?? {};
+  const allowedNames = Array.isArray(catalog?.names) ? catalog.names : [];
   const loggedPerformance = Array.isArray(context.logged_performance)
     ? context.logged_performance
     : [];
+  const loggedNames = loggedPerformance.map((row) => row.exercise).filter(Boolean);
 
   return `You are converting coach advice into a workout template JSON object.
 
+==================== EXERCISE NAME PROTOCOL (ABSOLUTE — HIGHEST PRIORITY) ====================
+Every exercise_name MUST appear VERBATIM (character-for-character, exact spelling and casing) in allowed_exercise_names below. That list is the complete app database and the ONLY valid source of exercise names. NEVER use any name not in the list — no variations, synonyms, plurals, abbreviations, or invented names. Any exercise_name not in allowed_exercise_names is rejected and the template fails. If the movement is not listed, substitute the closest listed entry or omit it.
+============================================================================================
+
 Rules:
 - Return ONLY valid JSON. No markdown, no commentary.
-- Use exercise names EXACTLY as they appear in exercise_catalog_by_muscle (character-for-character).
+- exercise_name MUST be copied character-for-character from allowed_exercise_names (the app database). No exceptions. allowed_exercise_names is the ONLY valid source of exercise names.
+- FORBIDDEN: any exercise_name that is not present verbatim in allowed_exercise_names. Do not invent, pluralize, or abbreviate (e.g. "Squats" is invalid if the list only contains "Squat"). Any name not in the list is rejected.
+- If advice used a name not in the list, choose the best matching allowed_exercise_names entry for that movement. When several variants exist (e.g. squat or bench family), prefer a name from logged_performance if present; otherwise pick the standard barbell variant from the list.
 - Include 4–8 exercises when the advice describes a full session; fewer only if advice is narrow.
 - Each exercise needs 2–5 sets with reps (integer). weight is optional number in lbs.
 - Only include weight for an exercise if that exact exercise name appears in logged_performance.
 - Never copy a weight from one exercise to another.
 - template name: short (max 60 chars), descriptive session label.
-- Do not invent exercises outside the catalog.
+- Any exercise_name not in allowed_exercise_names will be rejected.
 
 Schema:
 {
   "name": "string",
   "exercises": [
     {
-      "exercise_name": "exact catalog name",
+      "exercise_name": "exact string from allowed_exercise_names",
       "sets": [{ "reps": 8, "weight": 185 }]
     }
   ]
 }
 
-logged_performance (only source for weights):
+allowed_exercise_names (${allowedNames.length} total — ONLY valid exercise_name values):
+${JSON.stringify(allowedNames)}
+
+logged_performance (only source for weights; prefer these names when choosing variants):
 ${JSON.stringify(loggedPerformance, null, 2)}
 
-exercise_catalog_by_muscle:
-${JSON.stringify(catalog, null, 2)}
+logged_exercise_names:
+${JSON.stringify(loggedNames)}
+
+exercise_catalog_by_muscle (browse by muscle — still copy names from allowed_exercise_names only):
+${JSON.stringify(catalogByMuscle, null, 2)}
 
 Athlete question:
 ${question}
@@ -159,7 +152,9 @@ function validateAndResolveDraft(raw, catalogExercises, loggedPerformance) {
 
     const resolved = resolveExerciseName(exerciseName, catalogIndex);
     if (!resolved) {
-      warnings.push(`Skipped unknown exercise: ${exerciseName}`);
+      warnings.push(
+        `Skipped "${exerciseName}" — not an exact catalog name. Use allowed_exercise_names verbatim.`,
+      );
       continue;
     }
 

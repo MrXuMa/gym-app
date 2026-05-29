@@ -104,15 +104,8 @@ export default function RootLayout() {
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="profile" />
           <Stack.Screen name="goals" />
+          <Stack.Screen name="food-daily-log" />
           <Stack.Screen name="training-split" />
-          <Stack.Screen
-            name="food-scan"
-            options={{
-              headerShown: false,
-              gestureEnabled: true,
-              animation: 'slide_from_right',
-            }}
-          />
           <Stack.Screen name="exercises" />
           <Stack.Screen
             name="modal"

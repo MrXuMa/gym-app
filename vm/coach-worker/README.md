@@ -22,22 +22,22 @@ Node starts but `/app` has no `server.js`. Common causes:
 
 Fix: sync the full `vm/coach-worker/` tree to `/opt/coach-stack/coach-api/`, confirm `ls` shows `server.js`, then `docker compose build coach-api --no-cache`.
 
-## Files
+## Layout
 
-| File | Purpose |
+| Path | Purpose |
 |------|---------|
-| `server.js` | Supabase pull worker (advice + template + context-sync queues) + Ollama client + health endpoints |
-| `contextMerge.js` | Rebuild one user's `coach_context` row from bounded Supabase queries (Supabase-only; no per-user files on disk) |
-| `coachContextLimits.js` | Tunable caps: recent sessions, metrics window, advice summaries, weight log days |
-| `contextHelpers.js` | Pure helpers: logged-performance allowlist, summary sanitizer, 90-day weight-trend summary |
-| `trainingSignals.js` | Muscle recovery / readiness hints from `recent_sessions` |
-| `coachGeneralKnowledge.js` | Shared evidence-based lifting knowledge (same for every user) |
-| `coachTemplate.js` | Structured workout-template JSON prompt + draft validation against the catalog |
-| `coachCatalogCache.js` | Process-level TTL cache for the global exercise catalog (`COACH_CATALOG_TTL_MS`, default 10m) |
-| `Dockerfile` | Node 22 Alpine image |
-| `package.json` | `express` only (no Redis/JWT) |
+| `server.js` | Thin entry: health routes + bootstrap + queue pollers |
+| `config.js` | Central env (Ollama, Supabase, poll intervals) |
+| `lib/` | `supabase.js`, `ollama.js`, `jobQueue.js`, `dates.js` |
+| `context/` | Context rebuild: `merge.js`, `nutrition.js`, `snapshot.js`, `sessions.js`, … |
+| `coach/` | Prompts: `prompt.js`, `adviceMode.js`, `knowledge.js`, `formatInstructions.js` |
+| `jobs/` | `advice.js`, `template.js`, `contextSync.js` |
+| `trainingSignals.js`, `trainingSplit.js` | Recovery + weekly split from sessions |
+| `coachTemplate.js`, `coachCatalogCache.js` | Template JSON + catalog TTL cache |
 
-> The directory on the VM must contain **exactly** these `.js` files plus `Dockerfile` and `package.json`. If older files (`loggedPerformance.js`, `weightTrend.js`, `exerciseCatalog.js`) are still present from a previous deploy, delete them before rebuilding to avoid drift.
+Copy the **entire** `vm/coach-worker/` tree (including subfolders). `Dockerfile` uses `COPY . .`.
+
+> Remove any legacy stray files on the VM (`loggedPerformance.js`, `weightTrend.js`, `exerciseCatalog.js`, `contextMerge.js`, `athleteSnapshot.js`, `contextHelpers.js`, `coachContextLimits.js`, `coachPromptPack.js`, `coachGeneralKnowledge.js`) before rebuilding — they were merged into `context/` and `coach/`.
 
 ## Env (docker-compose)
 
@@ -70,7 +70,7 @@ If advice jobs fail with CUDA OOM, set `COACH_NUM_CTX=6144` in compose.
 ## Coach context storage
 
 - **Source of truth:** `coach_context.context` JSON in Supabase (one row per user).
-- **Rebuild:** context-sync queue → `contextMerge.js` (bounded queries; limits in `coachContextLimits.js`).
+- **Rebuild:** context-sync queue → `context/merge.js` (bounded queries; limits in `context/limits.js`).
 - **Advice jobs:** read context from Supabase, build prompt in memory, write response back to Supabase — no per-user JSON on the VM.
 - **Legacy:** `COACH_DATA_DIR` / `/data/coach/users/*.json` removed; remove any bind mount that only existed for those files.
 

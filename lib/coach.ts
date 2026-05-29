@@ -24,6 +24,16 @@ export type CreateCoachAdviceInput = {
 
 const MAX_QUESTION_LENGTH = 500;
 const MIN_QUESTION_LENGTH = 8;
+const NETWORK_TIMEOUT_MS = 15000;
+
+async function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
+  return await Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out. Check your connection and try again.`)), NETWORK_TIMEOUT_MS),
+    ),
+  ]);
+}
 
 export class CoachNotConfiguredError extends Error {
   constructor() {
@@ -110,12 +120,15 @@ export async function getLatestCoachAdviceRequest(): Promise<CoachAdviceRequest 
     return null;
   }
 
-  const { data, error } = await supabase
-    .from('coach_advice_requests')
-    .select('*')
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const { data, error } = await withTimeout(
+    supabase
+      .from('coach_advice_requests')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    'Loading coach status',
+  );
 
   if (error) {
     throw new CoachServiceUnavailableError(error.message);
@@ -143,9 +156,12 @@ export async function createCoachAdviceRequest(
     throw new CoachUnauthorizedError();
   }
 
-  const { data, error } = await supabase.rpc('request_coach_advice', {
-    p_question: question,
-  });
+  const { data, error } = await withTimeout(
+    supabase.rpc('request_coach_advice', {
+      p_question: question,
+    }),
+    'Submitting coach request',
+  );
 
   if (error) {
     throw new CoachServiceUnavailableError(error.message);
@@ -159,11 +175,14 @@ export async function getCoachAdviceRequest(requestId: string): Promise<CoachAdv
     throw new CoachNotConfiguredError();
   }
 
-  const { data, error } = await supabase
-    .from('coach_advice_requests')
-    .select('*')
-    .eq('id', requestId)
-    .single();
+  const { data, error } = await withTimeout(
+    supabase
+      .from('coach_advice_requests')
+      .select('*')
+      .eq('id', requestId)
+      .single(),
+    'Refreshing coach response',
+  );
 
   if (error) {
     throw new CoachServiceUnavailableError(error.message);
@@ -174,9 +193,12 @@ export async function getCoachAdviceRequest(requestId: string): Promise<CoachAdv
 
 /** Merge a completed advice response summary into coach_context (idempotent). */
 export async function recordCoachAdviceInContext(requestId: string): Promise<void> {
-  const { error } = await supabase.rpc('record_coach_advice_in_context', {
-    p_advice_id: requestId,
-  });
+  const { error } = await withTimeout(
+    supabase.rpc('record_coach_advice_in_context', {
+      p_advice_id: requestId,
+    }),
+    'Recording coach context',
+  );
 
   if (error) {
     console.warn('[coach] could not record advice in context:', error.message);
@@ -194,7 +216,10 @@ export async function clearCoachMemory(): Promise<void> {
     throw new CoachUnauthorizedError();
   }
 
-  const { error } = await supabase.rpc('clear_coach_memory');
+  const { error } = await withTimeout(
+    supabase.rpc('clear_coach_memory'),
+    'Clearing coach memory',
+  );
 
   if (error) {
     throw new CoachServiceUnavailableError(error.message);

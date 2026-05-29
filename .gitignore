@@ -38,7 +38,17 @@ yarn-error.*
 # session continuity notes (local agent context)
 context/
 .cursor/
-supabase/
+
+# supabase: deployed via tooling; only track the food-analyzer feature source
+supabase/*
+!supabase/functions/
+supabase/functions/*
+!supabase/functions/analyze-food/
+supabase/functions/analyze-food/*
+!supabase/functions/analyze-food/index.ts
+!supabase/migrations/
+supabase/migrations/*
+!supabase/migrations/20260529120000_drop_food_analysis_results_daily_requests.sql
 
 # typescript
 *.tsbuildinfo

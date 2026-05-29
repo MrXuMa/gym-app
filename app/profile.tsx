@@ -315,21 +315,6 @@ export default function ProfileScreen() {
 
           <Pressable
             style={styles.goalsSection}
-            onPress={() => router.push('/food-scan')}
-            accessibilityRole="button"
-            accessibilityLabel="Food scanner"
-          >
-            <View style={styles.goalsHeader}>
-              <Text style={styles.goalsTitle}>Food Scanner</Text>
-              <Text style={styles.goalsAction}>Log meal</Text>
-            </View>
-            <Text style={styles.goalsEmpty}>
-              Snap a photo of your food to get an instant macro breakdown.
-            </Text>
-          </Pressable>
-
-          <Pressable
-            style={styles.goalsSection}
             onPress={() => router.push('/goals')}
             accessibilityRole="button"
             accessibilityLabel="Personal goals"

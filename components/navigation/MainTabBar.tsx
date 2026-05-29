@@ -20,7 +20,7 @@ const LEFT_TABS: TabItem[] = [
 
 const RIGHT_TABS: TabItem[] = [
   { routeName: 'friends', label: 'Friends', icon: 'people-outline' },
-  { routeName: 'tasks', label: 'Tasks', icon: 'checkbox-outline' },
+  { routeName: 'food-scan', label: 'Food', icon: 'camera-outline' },
 ];
 
 const HOME_TAB: TabItem = {

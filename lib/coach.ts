@@ -16,10 +16,12 @@ export type CoachAdviceRequest = {
   createdAt: string;
   completedAt: string | null;
   contextRecorded: boolean;
+  wantsTemplate: boolean;
 };
 
 export type CreateCoachAdviceInput = {
   question: string;
+  wantsTemplate?: boolean;
 };
 
 const MAX_QUESTION_LENGTH = 500;
@@ -100,6 +102,7 @@ function mapAdviceRow(row: {
   created_at: string;
   completed_at: string | null;
   context_recorded?: boolean;
+  wants_template?: boolean;
 }): CoachAdviceRequest {
   return {
     id: row.id,
@@ -111,6 +114,7 @@ function mapAdviceRow(row: {
     createdAt: row.created_at,
     completedAt: row.completed_at ?? null,
     contextRecorded: row.context_recorded ?? false,
+    wantsTemplate: row.wants_template ?? false,
   };
 }
 
@@ -159,6 +163,7 @@ export async function createCoachAdviceRequest(
   const { data, error } = await withTimeout(
     supabase.rpc('request_coach_advice', {
       p_question: question,
+      p_wants_template: input.wantsTemplate ?? false,
     }),
     'Submitting coach request',
   );

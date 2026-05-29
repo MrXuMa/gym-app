@@ -1,6 +1,9 @@
 const { COACH_PRINCIPLES_COMPACT } = require('./knowledge');
 const { formatWeeklySplitBlock } = require('../trainingSplit');
-const { MAX_RESPONSE_SUMMARIES_IN_PROMPT } = require('../context/limits');
+const {
+  MAX_RESPONSE_SUMMARIES_IN_PROMPT,
+  NEW_USER_SESSION_THRESHOLD,
+} = require('../context/limits');
 const {
   buildPlanFormatInstructions,
   buildReasoningFormatInstructions,
@@ -9,10 +12,38 @@ const {
 const NUTRITION_TOPIC_RE =
   /\b(calorie|calories|kcal|protein|carb|carbs|fat|macro|macros|eat|eating|food|meal|meals|nutrition|diet|bulk|cut|deficit|surplus|hungry|fasting|breakfast|lunch|dinner)\b/i;
 
+// "How was my workout today / rate my session" — feedback on a single logged
+// session, distinct from trend analysis. Allowed even for brand-new athletes.
+const SESSION_REVIEW_RE =
+  /\b(how (?:was|did|'?s|is) (?:my|today'?s|that|the|this) (?:workout|session|training|lift|day)|how did i (?:do|train|perform|lift)|rate my (?:workout|session|lift|training)|review (?:my|today'?s|this) (?:workout|session)|feedback on (?:my|today'?s|this) (?:workout|session|training)|how was today|was my (?:workout|session|training) (?:good|ok|okay|enough|hard enough))\b/i;
+
 function classifyTopic(question, mode) {
   if (NUTRITION_TOPIC_RE.test(String(question ?? ''))) return 'nutrition';
   if (mode === 'plan') return 'training';
   return 'general';
+}
+
+function isSessionReviewQuestion(question) {
+  return SESSION_REVIEW_RE.test(String(question ?? ''));
+}
+
+function buildSessionReviewBlock() {
+  return `
+SESSION REVIEW (the athlete is asking how a specific day's workout went):
+- Judge ONLY that session from logged_performance, recent_sessions, and snapshot.training.last_session — do NOT require multi-week history or trends.
+- Give 2-4 concrete, actionable cues tied to snapshot.goals (e.g. push closer to RPE 8-9 / increase intensity, add exercise variation, progress load next time, adjust set volume or rest).
+- Be specific and encouraging. Max ~150 words. No lecture, no full new workout template.
+`;
+}
+
+function buildLimitedHistoryBlock(isSessionReview) {
+  return `
+LIMITED TRAINING HISTORY (fewer than ${NEW_USER_SESSION_THRESHOLD} logged sessions — this athlete just started):
+- Do NOT say they are "not training <muscle> enough", have imbalances, are over/under-training, or describe weekly/multi-week trends. There is not enough data to support those claims.
+- If they ask about progress, trends, weak points, consistency, or what they've neglected: state plainly that there isn't enough training history yet to identify trends, and that you'll have real insights after a few more logged sessions. Keep it short.
+- You MAY still answer general training/nutrition education questions and produce a requested workout plan from their split + goals.
+${isSessionReview ? `- EXCEPTION: they asked about a specific day's session — give that single-session feedback per SESSION REVIEW above (intensity, variation, load). Judge only that one workout, never trends.` : ''}
+`.trimEnd();
 }
 
 function filterCatalogForPlan(catalog, context) {
@@ -221,6 +252,16 @@ function buildCompactPrompt(context, question, catalog, mode) {
     blocks.push(`\nCOACH MEMORY (continuity, not logs): ${memory}`);
   }
 
+  const sessionReview = isSessionReviewQuestion(question);
+  const limitedHistory = snapshot?.history?.status === 'limited';
+
+  if (sessionReview) {
+    blocks.push(buildSessionReviewBlock());
+  }
+  if (limitedHistory) {
+    blocks.push(buildLimitedHistoryBlock(sessionReview));
+  }
+
   const promptContext = buildPromptContext(context, mode, topic);
   const formatInstructions =
     mode === 'plan' ? buildPlanFormatInstructions() : buildReasoningFormatInstructions();
@@ -245,6 +286,7 @@ Coach advice:`;
 
 module.exports = {
   classifyTopic,
+  isSessionReviewQuestion,
   filterCatalogForPlan,
   buildCompactPrompt,
   buildPromptContext,

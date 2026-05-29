@@ -24,7 +24,7 @@ export type UseCoachResult = {
   isConfigured: boolean;
   connectionError: string | null;
   refresh: () => Promise<void>;
-  requestAdvice: (question: string) => Promise<CoachAdviceRequest | null>;
+  requestAdvice: (question: string, wantsTemplate?: boolean) => Promise<CoachAdviceRequest | null>;
   clearMemory: () => Promise<void>;
 };
 
@@ -99,11 +99,11 @@ export function useCoach(): UseCoachResult {
   }, [load]);
 
   const requestAdvice = useCallback(
-    async (question: string): Promise<CoachAdviceRequest | null> => {
+    async (question: string, wantsTemplate = false): Promise<CoachAdviceRequest | null> => {
       setSubmitting(true);
 
       try {
-        const created = await createCoachAdviceRequest({ question });
+        const created = await createCoachAdviceRequest({ question, wantsTemplate });
         setRequest(created);
         setConnectionError(null);
         pollFailuresRef.current = 0;

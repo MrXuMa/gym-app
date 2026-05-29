@@ -12,8 +12,9 @@ import {
   CoachUnauthorizedError,
   isValidCoachQuestion,
 } from '@/lib/coach';
+import { getCoachTemplateProposalForAdvice } from '@/lib/coachTemplate';
 import { useRouter } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -38,12 +39,44 @@ export default function CoachScreen() {
     clearError: clearTemplateError,
   } = useCoachTemplateProposal();
   const [question, setQuestion] = useState('');
+  const [templateMode, setTemplateMode] = useState(false);
+  const autoTemplateAdviceRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (request?.status === 'completed') {
-      void refreshForAdvice(request.id);
+    const completed = request;
+    if (!completed || completed.status !== 'completed') {
+      return;
     }
-  }, [request?.id, request?.status, refreshForAdvice]);
+
+    let cancelled = false;
+
+    void (async () => {
+      await refreshForAdvice(completed.id);
+      if (cancelled || !completed.wantsTemplate) {
+        return;
+      }
+      if (autoTemplateAdviceRef.current === completed.id) {
+        return;
+      }
+
+      try {
+        const existing = await getCoachTemplateProposalForAdvice(completed.id);
+        if (cancelled) {
+          return;
+        }
+        autoTemplateAdviceRef.current = completed.id;
+        if (!existing) {
+          void requestTemplate(completed.id);
+        }
+      } catch {
+        // Auto-generation is best-effort; the manual "Create template" button stays available.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [request?.id, request?.status, request?.wantsTemplate, refreshForAdvice, requestTemplate]);
 
   const handleCreateTemplate = useCallback(() => {
     if (!request || request.status !== 'completed') {
@@ -81,7 +114,7 @@ export default function CoachScreen() {
     }
 
     try {
-      const created = await requestAdvice(question);
+      const created = await requestAdvice(question, templateMode);
       if (created) {
         setQuestion('');
       }
@@ -171,6 +204,8 @@ export default function CoachScreen() {
           question={question}
           onChangeQuestion={setQuestion}
           onSubmit={() => void handleSubmit()}
+          templateMode={templateMode}
+          onToggleTemplateMode={setTemplateMode}
           submitting={submitting}
         />
 

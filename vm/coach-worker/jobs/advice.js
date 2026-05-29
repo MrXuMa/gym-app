@@ -98,7 +98,7 @@ async function processAdviceJob(requestId) {
       loadCatalogCached(rest),
     ]);
 
-    const mode = classifyAdviceMode(row.question);
+    const mode = classifyAdviceMode(row.question, { wantsTemplate: row.wants_template === true });
     const prompt = buildCompactPrompt(context, row.question, catalog, mode);
     logPromptBudget(prompt, mode);
 

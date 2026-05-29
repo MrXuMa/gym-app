@@ -2,6 +2,17 @@
  * Structured workout template generation from completed coach advice.
  */
 
+const { muscleAllowed, filterCatalogToSpec, intensityGuidance } = require('./coach/templateSpec');
+
+/** Thrown when a draft parses but fails the requested criteria — signals a regenerate. */
+class TemplateCriteriaError extends Error {
+  constructor(message, correction) {
+    super(message);
+    this.name = 'TemplateCriteriaError';
+    this.correction = correction || message;
+  }
+}
+
 function normalizeName(value) {
   return String(value ?? '')
     .toLowerCase()
@@ -71,31 +82,79 @@ function extractJsonObject(text) {
   }
 }
 
-function buildTemplatePrompt(context, question, advice, catalog) {
-  const catalogByMuscle = catalog?.byMuscle ?? {};
-  const allowedNames = Array.isArray(catalog?.names) ? catalog.names : [];
+function describeTarget(spec) {
+  if (!spec || !spec.targetMuscles?.length) {
+    return 'Target muscles: follow the coach advice and the athlete\'s training split.';
+  }
+  const wanted = spec.targetMuscles.join(', ');
+  const allowed = spec.allowedMuscleNames.join(', ');
+  const sourceLabel =
+    spec.source === 'request'
+      ? 'the athlete explicitly requested these muscle groups'
+      : spec.source === 'split'
+        ? 'the athlete\'s training split schedules these muscle groups today'
+        : 'the coach advice targets these muscle groups';
+  return `Target muscle groups: ${wanted} (${sourceLabel}).
+Every exercise MUST train one of these allowed muscle groups ONLY: ${allowed}.
+Do NOT include exercises for any other muscle group (e.g. no chest/push work on a back/pull day). Out-of-group exercises are rejected.`;
+}
+
+function buildTemplatePrompt(context, question, advice, catalog, spec, options = {}) {
+  const { previousTemplate = null, correction = null } = options;
+  const filtered = filterCatalogToSpec(catalog, spec);
+  const allowedNames = filtered.names;
+  const catalogByMuscle = filtered.byMuscle;
   const loggedPerformance = Array.isArray(context.logged_performance)
     ? context.logged_performance
     : [];
   const loggedNames = loggedPerformance.map((row) => row.exercise).filter(Boolean);
 
-  return `You are converting coach advice into a workout template JSON object.
+  const countLine =
+    spec.count.min === spec.count.max
+      ? `Include EXACTLY ${spec.count.min} exercises.`
+      : `Include ${spec.count.min}-${spec.count.max} exercises.`;
 
+  const modificationBlock =
+    spec.isModification && previousTemplate
+      ? `
+==================== MODIFY PREVIOUS WORKOUT ====================
+The athlete is asking to reuse/modify their previous workout, NOT to build a brand-new one. Start from previous_template below and change ONLY what the athlete asked (e.g. swap one exercise, adjust sets). Keep every other exercise, its order, and its sets identical.
+previous_template:
+${JSON.stringify(previousTemplate, null, 2)}
+================================================================
+`
+      : '';
+
+  const correctionBlock = correction
+    ? `
+==================== FIX REQUIRED (previous attempt rejected) ====================
+${correction}
+Regenerate the FULL template correcting this. Use only allowed_exercise_names that train the target muscle groups.
+=================================================================================
+`
+    : '';
+
+  return `You are converting coach advice into a workout template JSON object.
+${correctionBlock}${modificationBlock}
 ==================== EXERCISE NAME PROTOCOL (ABSOLUTE — HIGHEST PRIORITY) ====================
-Every exercise_name MUST appear VERBATIM (character-for-character, exact spelling and casing) in allowed_exercise_names below. That list is the complete app database and the ONLY valid source of exercise names. NEVER use any name not in the list — no variations, synonyms, plurals, abbreviations, or invented names. Any exercise_name not in allowed_exercise_names is rejected and the template fails. If the movement is not listed, substitute the closest listed entry or omit it.
+Every exercise_name MUST appear VERBATIM (character-for-character, exact spelling and casing) in allowed_exercise_names below. That list is the ONLY valid source of exercise names. NEVER use any name not in the list — no variations, synonyms, plurals, abbreviations, or invented names. Any exercise_name not in allowed_exercise_names is rejected and the template fails. If the movement is not listed, substitute the closest listed entry or omit it.
 ============================================================================================
+
+==================== WORKOUT REQUIREMENTS (must all be satisfied) ====================
+${describeTarget(spec)}
+${countLine}
+${intensityGuidance(spec.intensity)}
+Athlete goals: ${JSON.stringify(context?.athlete_snapshot?.goals ?? context?.profile?.goals ?? [])}.
+=====================================================================================
 
 Rules:
 - Return ONLY valid JSON. No markdown, no commentary.
-- exercise_name MUST be copied character-for-character from allowed_exercise_names (the app database). No exceptions. allowed_exercise_names is the ONLY valid source of exercise names.
-- FORBIDDEN: any exercise_name that is not present verbatim in allowed_exercise_names. Do not invent, pluralize, or abbreviate (e.g. "Squats" is invalid if the list only contains "Squat"). Any name not in the list is rejected.
-- If advice used a name not in the list, choose the best matching allowed_exercise_names entry for that movement. When several variants exist (e.g. squat or bench family), prefer a name from logged_performance if present; otherwise pick the standard barbell variant from the list.
-- Include 4–8 exercises when the advice describes a full session; fewer only if advice is narrow.
-- Each exercise needs 2–5 sets with reps (integer). weight is optional number in lbs.
-- Only include weight for an exercise if that exact exercise name appears in logged_performance.
-- Never copy a weight from one exercise to another.
-- template name: short (max 60 chars), descriptive session label.
-- Any exercise_name not in allowed_exercise_names will be rejected.
+- exercise_name MUST be copied character-for-character from allowed_exercise_names. allowed_exercise_names already contains ONLY exercises for the target muscle groups — pick from it.
+- FORBIDDEN: any exercise_name not present verbatim in allowed_exercise_names, and any exercise outside the target muscle groups.
+- If advice used a name not in the list, choose the closest allowed_exercise_names entry for that movement. Prefer a name from logged_performance when several variants exist.
+- Each exercise needs sets with reps (integer); weight is optional number in lbs.
+- Only include weight for an exercise if that exact exercise name appears in logged_performance. Never copy a weight from one exercise to another.
+- template name: short (max 60 chars), descriptive session label matching the target muscles.
 
 Schema:
 {
@@ -108,7 +167,7 @@ Schema:
   ]
 }
 
-allowed_exercise_names (${allowedNames.length} total — ONLY valid exercise_name values):
+allowed_exercise_names (${allowedNames.length} total — ONLY valid exercise_name values, already filtered to the target muscle groups):
 ${JSON.stringify(allowedNames)}
 
 logged_performance (only source for weights; prefer these names when choosing variants):
@@ -117,7 +176,7 @@ ${JSON.stringify(loggedPerformance, null, 2)}
 logged_exercise_names:
 ${JSON.stringify(loggedNames)}
 
-exercise_catalog_by_muscle (browse by muscle — still copy names from allowed_exercise_names only):
+exercise_catalog_by_muscle (target muscle groups only — still copy names from allowed_exercise_names):
 ${JSON.stringify(catalogByMuscle, null, 2)}
 
 Athlete question:
@@ -129,7 +188,7 @@ ${advice}
 JSON template:`;
 }
 
-function validateAndResolveDraft(raw, catalogExercises, loggedPerformance) {
+function validateAndResolveDraft(raw, catalogExercises, loggedPerformance, spec = null) {
   const parsed = extractJsonObject(raw);
   const name = String(parsed.name ?? '').trim();
   if (!name) {
@@ -143,6 +202,7 @@ function validateAndResolveDraft(raw, catalogExercises, loggedPerformance) {
   const catalogIndex = buildCatalogIndex(catalogExercises);
   const warnings = [];
   const exercises = [];
+  let offGroupCount = 0;
 
   for (const item of parsed.exercises) {
     const exerciseName = String(item.exercise_name ?? item.name ?? '').trim();
@@ -154,6 +214,14 @@ function validateAndResolveDraft(raw, catalogExercises, loggedPerformance) {
     if (!resolved) {
       warnings.push(
         `Skipped "${exerciseName}" — not an exact catalog name. Use allowed_exercise_names verbatim.`,
+      );
+      continue;
+    }
+
+    if (spec && !muscleAllowed(resolved.targetMuscle, spec)) {
+      offGroupCount += 1;
+      warnings.push(
+        `Skipped "${resolved.name}" (${resolved.targetMuscle}) — outside target muscle groups.`,
       );
       continue;
     }
@@ -195,13 +263,31 @@ function validateAndResolveDraft(raw, catalogExercises, loggedPerformance) {
     });
   }
 
+  // Criteria checks (target muscle coverage + exercise count) — signal a regenerate.
+  if (spec && spec.allowedMuscleNames.length) {
+    const minCount = spec.count?.min ?? 1;
+    if (exercises.length < minCount) {
+      const groups = spec.allowedMuscleNames.join(', ');
+      const detail = offGroupCount > 0
+        ? `${offGroupCount} exercise(s) were outside the target muscle groups and were rejected. `
+        : '';
+      throw new TemplateCriteriaError(
+        `Only ${exercises.length}/${minCount} valid exercises after group filtering.`,
+        `${detail}Only ${exercises.length} valid exercises remain. Provide ${minCount === (spec.count?.max ?? minCount) ? `exactly ${minCount}` : `at least ${minCount}`} exercises, EVERY one training the target muscle groups (${groups}). Use only allowed_exercise_names.`,
+      );
+    }
+  }
+
   if (exercises.length === 0) {
     throw new Error('No exercises matched the app catalog');
   }
 
+  const maxCount = spec?.count?.max;
+  const trimmed = maxCount ? exercises.slice(0, maxCount) : exercises;
+
   return {
     name: name.slice(0, 80),
-    exercises,
+    exercises: trimmed,
     warnings,
   };
 }
@@ -209,4 +295,5 @@ function validateAndResolveDraft(raw, catalogExercises, loggedPerformance) {
 module.exports = {
   buildTemplatePrompt,
   validateAndResolveDraft,
+  TemplateCriteriaError,
 };

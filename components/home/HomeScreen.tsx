@@ -50,6 +50,8 @@ export function HomeScreen() {
     () => ({
       openPredictedMaxPicker: () => setPredictedMaxPickerVisible(true),
       openWorkouts: () => router.push('/workouts'),
+      openLog: () => router.push('/log'),
+      openTrainingSplit: () => router.push('/training-split'),
     }),
     [router],
   );

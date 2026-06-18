@@ -9,9 +9,15 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.yourname.gymapp",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Allow gym-app to use the camera to scan food.",
+        "NSPhotoLibraryUsageDescription": "Allow gym-app to access your photos to log meals."
+      }
     },
     "android": {
+      "package": "com.yourname.gymapp",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -28,6 +34,13 @@
     "plugins": [
       "expo-router",
       [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow gym-app to access your photos to log meals.",
+          "cameraPermission": "Allow gym-app to use the camera to scan food."
+        }
+      ],
+      [
         "expo-splash-screen",
         {
           "image": "./assets/images/splash-icon.png",
@@ -39,7 +52,8 @@
           }
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      "expo-font"
     ],
     "experiments": {
       "typedRoutes": true,

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Keyboard, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { getErrorMessage } from '@/lib/userFacingError';
 import {
   addWorkoutSet,
   deleteExerciseSet,
@@ -337,7 +338,7 @@ export function ExerciseSessionCard({
       setDraftSets((current) => renumberDrafts(current, updatedSets.length));
       finishEditing();
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Could not delete set.';
+      const message = getErrorMessage(error, 'Could not delete set.');
       Alert.alert('Could not delete set', message);
     } finally {
       setDeletingSet(false);
@@ -405,7 +406,7 @@ export function ExerciseSessionCard({
       setSaving(false);
       finishEditing();
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Could not save set.';
+      const message = getErrorMessage(error, 'Could not save set.');
       Alert.alert('Could not save set', message);
       setSaving(false);
     }

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useFocusEffect } from 'expo-router';
 import { fetchHomeMetrics, type HomeMetrics } from '@/lib/homeMetrics';
 import {
   disableWidget,
@@ -13,16 +14,22 @@ import {
 } from '@/lib/widgetSettings';
 
 const EMPTY: HomeMetrics = {
-  streakDays: 0,
   workoutsThisWeek: 0,
   currentWeight: null,
   weightTrendLabel: '—',
   weightChangeLbs: null,
   weightTrendSpanDays: null,
+  weightChangeSinceLastLbs: null,
   predictedMax: null,
   predictedLiftName: 'Bench Press',
   predictedLiftExerciseId: null,
   weightHistory: [],
+  todayCalories: 0,
+  todayProteinG: 0,
+  todayCarbsG: 0,
+  todayFatG: 0,
+  todaySplitMuscles: null,
+  mealsThisWeek: 0,
 };
 
 const EMPTY_SETTINGS: WidgetSettings = {
@@ -53,6 +60,14 @@ export function useHomeMetrics() {
       }
     })();
   }, [loadWith]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!loading) {
+        void loadWith(settings);
+      }
+    }, [loadWith, settings, loading]),
+  );
 
   const refresh = useCallback(async () => {
     setRefreshing(true);

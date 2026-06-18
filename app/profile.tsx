@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { getErrorMessage } from '@/lib/userFacingError';
 import {
   ActivityIndicator,
   Alert,
@@ -27,7 +28,13 @@ import {
   WEIGHT_MAX_LBS,
   type WeightLogEntry,
 } from '@/lib/profileWeight';
-import { dayKeyFromDate, fetchTrainingSplit, summarizeSplitForDay } from '@/lib/trainingSplit';
+import {
+  dayKeyFromDate,
+  fetchTrainingSplitState,
+  isSplitConfigured,
+  summarizeSplitForDay,
+} from '@/lib/trainingSplit';
+import { formatLiftingLevelLabel, type LiftingLevel } from '@/lib/liftingLevel';
 
 const RECENT_LOGS_LIMIT = 10;
 
@@ -69,9 +76,13 @@ export default function ProfileScreen() {
 
   const loadSplitPreview = useCallback(async () => {
     try {
-      const schedule = await fetchTrainingSplit();
+      const state = await fetchTrainingSplitState();
+      if (!isSplitConfigured(state)) {
+        setSplitPreview('No split — coach uses requests & history');
+        return;
+      }
       const today = dayKeyFromDate(new Date());
-      setSplitPreview(summarizeSplitForDay(schedule, today));
+      setSplitPreview(summarizeSplitForDay(state.schedule, today));
     } catch {
       setSplitPreview(null);
     }
@@ -85,7 +96,7 @@ export default function ProfileScreen() {
 
   async function signOut() {
     const { error } = await supabase.auth.signOut();
-    if (error) Alert.alert('Sign out failed', error.message);
+    if (error) Alert.alert('Sign out failed', getErrorMessage(error, 'Could not sign out.'));
   }
 
   async function handleSaveWeight() {
@@ -106,7 +117,7 @@ export default function ProfileScreen() {
       await reload();
       await loadLogs();
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Could not update weight.';
+      const message = getErrorMessage(error, 'Could not update weight.');
       Alert.alert('Could not update weight', message);
     } finally {
       setSavingWeight(false);
@@ -134,7 +145,7 @@ export default function ProfileScreen() {
       await deleteWeightLog(log.id);
       await Promise.all([reload(), loadLogs()]);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Could not delete log.';
+      const message = getErrorMessage(error, 'Could not delete log.');
       Alert.alert('Could not delete log', message);
     } finally {
       setDeletingLogId(null);
@@ -168,6 +179,10 @@ export default function ProfileScreen() {
               value={profile?.weight != null ? `${profile.weight} ${WEIGHT_UNIT_LABEL}` : '—'}
             />
             <Row label="Height" value={profile?.height != null ? `${profile.height} in` : '—'} />
+            <Row
+              label="Lifting level"
+              value={formatLiftingLevelLabel(profile?.lifting_level as LiftingLevel | null)}
+            />
           </View>
 
           <View style={styles.weightSection}>
@@ -295,6 +310,25 @@ export default function ProfileScreen() {
               )
             ) : null}
           </View>
+
+          <Pressable
+            style={styles.goalsSection}
+            onPress={() => router.push('/lifting-level')}
+            accessibilityRole="button"
+            accessibilityLabel="Lifting level"
+          >
+            <View style={styles.goalsHeader}>
+              <Text style={styles.goalsTitle}>Lifting level</Text>
+              <Text style={styles.goalsAction}>
+                {profile?.lifting_level ? 'Update' : 'Set level'}
+              </Text>
+            </View>
+            <Text style={styles.goalsEmpty}>
+              {profile?.lifting_level
+                ? formatLiftingLevelLabel(profile.lifting_level as LiftingLevel)
+                : 'Tell your coach how long you have been training so workouts match your experience.'}
+            </Text>
+          </Pressable>
 
           <Pressable
             style={styles.goalsSection}

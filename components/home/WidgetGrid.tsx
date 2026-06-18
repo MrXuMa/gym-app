@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import { homeTheme } from '@/constants/theme';
 import type { HomeMetrics } from '@/lib/homeMetrics';
 import { type WidgetId } from '@/lib/widgetSettings';
+import { getWidgetWidthSpan } from '@/components/home/widgetSizing';
 import {
   getWidgetDefinition,
   type WidgetCallbacks,
@@ -27,8 +28,8 @@ type LaidOutRow = {
 
 /**
  * Greedy row builder: pack consecutive widgets into rows of `HOME_COLUMNS` columns,
- * starting a new row whenever the next widget would overflow. A widthSpan-2 widget
- * always sits on its own row.
+ * starting a new row whenever the next widget would overflow. A full-row widget
+ * (`medium` or `large`) always sits on its own row.
  */
 function layoutWidgets(
   entries: { definition: WidgetDefinition; rendered: WidgetRenderResult }[],
@@ -37,7 +38,7 @@ function layoutWidgets(
   let current: LaidOutRow | null = null;
 
   for (const entry of entries) {
-    const span = entry.definition.widthSpan;
+    const span = getWidgetWidthSpan(entry.definition.size);
     if (!current || current.spanUsed + span > HOME_COLUMNS) {
       current = { cells: [], spanUsed: 0 };
       rows.push(current);
@@ -79,7 +80,7 @@ export function WidgetGrid({
               key={`cell-${definition.id}`}
               style={({ pressed }) => [
                 styles.cell,
-                definition.widthSpan === 2 ? styles.fullCell : styles.halfCell,
+                getWidgetWidthSpan(definition.size) === 2 ? styles.fullCell : styles.halfCell,
                 movingWidgetId === definition.id && styles.cellMoving,
                 isMoveMode && movingWidgetId !== definition.id && styles.cellDimmed,
                 pressed && !isMoveMode && styles.cellPressed,

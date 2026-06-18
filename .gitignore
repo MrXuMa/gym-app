@@ -39,13 +39,18 @@ yarn-error.*
 context/
 .cursor/
 
-# supabase: migrations fully ignored (deployed via tooling); only track functions
+# supabase: track migrations + edge functions
 supabase/*
+!supabase/migrations/
+!supabase/migrations/**
 !supabase/functions/
 supabase/functions/*
 !supabase/functions/analyze-food/
 supabase/functions/analyze-food/*
 !supabase/functions/analyze-food/index.ts
+!supabase/functions/search-food/
+supabase/functions/search-food/*
+!supabase/functions/search-food/index.ts
 
 # typescript
 *.tsbuildinfo
@@ -55,3 +60,4 @@ app-example
 # generated native folders
 /ios
 /android
+.vercel

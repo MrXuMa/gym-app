@@ -1,5 +1,5 @@
 /**
- * Body weight trend helper — mirrors vm/coach-worker/weightTrend.js so the app and
+ * Body weight trend helper — shared logic with coach context rebuild so the app and
  * coach context agree on what 'gaining' / 'losing' / 'maintaining' means.
  */
 

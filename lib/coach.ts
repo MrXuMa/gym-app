@@ -1,31 +1,38 @@
 /**
- * AI Coach client — Supabase only.
- * One advice request per user at a time; summaries merge into coach_context on completion.
+ * AI Coach client — single coach_template_jobs table.
  */
 import { supabase } from '@/lib/supabase';
+import { mapCoachRpcErrorMessage } from '@/lib/userFacingError';
 
-export type CoachAdviceStatus = 'pending' | 'running' | 'completed' | 'failed';
+export type CoachTemplateJobStatus = 'pending' | 'running' | 'completed' | 'failed';
 
-export type CoachAdviceRequest = {
+export type CoachTemplateDraftExercise = {
+  exercise_id: string;
+  exercise_name: string;
+  target_muscle: string | null;
+  sets: { reps: number; weight: number | null }[];
+};
+
+export type CoachTemplateDraft = {
+  name: string;
+  exercises: CoachTemplateDraftExercise[];
+  warnings?: string[];
+};
+
+export type CoachTemplateJob = {
   id: string;
   userId: string;
-  question: string;
-  status: CoachAdviceStatus;
-  response: string | null;
+  prompt: string;
+  status: CoachTemplateJobStatus;
+  templateDraft: CoachTemplateDraft | null;
   error: string | null;
   createdAt: string;
   completedAt: string | null;
-  contextRecorded: boolean;
-  wantsTemplate: boolean;
+  acceptedAt: string | null;
+  savedTemplateId: string | null;
 };
 
-export type CreateCoachAdviceInput = {
-  question: string;
-  wantsTemplate?: boolean;
-};
-
-const MAX_QUESTION_LENGTH = 500;
-const MIN_QUESTION_LENGTH = 8;
+const MAX_PROMPT_LENGTH = 500;
 const NETWORK_TIMEOUT_MS = 15000;
 
 async function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
@@ -45,14 +52,14 @@ export class CoachNotConfiguredError extends Error {
 }
 
 export class CoachServiceUnavailableError extends Error {
-  constructor(message = 'Coach advice is not available right now.') {
+  constructor(message = 'Workout generation is not available right now.') {
     super(message);
     this.name = 'CoachServiceUnavailableError';
   }
 }
 
 export class CoachUnauthorizedError extends Error {
-  constructor(message = 'Sign in to request coach advice.') {
+  constructor(message = 'Sign in to generate a workout.') {
     super(message);
     this.name = 'CoachUnauthorizedError';
   }
@@ -65,68 +72,58 @@ export function isCoachConfigured(): boolean {
   );
 }
 
-export function normalizeCoachQuestion(question: string): string {
-  return question.trim().replace(/\s+/g, ' ');
+export function normalizeCoachPrompt(prompt: string): string {
+  return prompt.trim().replace(/\s+/g, ' ');
 }
 
-export function isValidCoachQuestion(question: string): boolean {
-  const normalized = normalizeCoachQuestion(question);
-  return normalized.length >= MIN_QUESTION_LENGTH && normalized.length <= MAX_QUESTION_LENGTH;
+export function isValidCoachPrompt(prompt: string): boolean {
+  return normalizeCoachPrompt(prompt).length <= MAX_PROMPT_LENGTH;
 }
 
-export function getCoachQuestionValidationMessage(question: string): string | null {
-  const normalized = normalizeCoachQuestion(question);
-
-  if (normalized.length < MIN_QUESTION_LENGTH) {
-    return `Ask at least ${MIN_QUESTION_LENGTH} characters.`;
+export function getCoachPromptValidationMessage(prompt: string): string | null {
+  const normalized = normalizeCoachPrompt(prompt);
+  if (normalized.length > MAX_PROMPT_LENGTH) {
+    return `Keep your note under ${MAX_PROMPT_LENGTH} characters.`;
   }
-
-  if (normalized.length > MAX_QUESTION_LENGTH) {
-    return `Keep your question under ${MAX_QUESTION_LENGTH} characters.`;
-  }
-
   return null;
 }
 
-export function isCoachAdviceTerminal(status: CoachAdviceStatus): boolean {
+export function isCoachJobTerminal(status: CoachTemplateJobStatus): boolean {
   return status === 'completed' || status === 'failed';
 }
 
-function mapAdviceRow(row: {
+function mapJobRow(row: {
   id: string;
   user_id: string;
-  question: string;
-  status: CoachAdviceStatus;
-  response: string | null;
+  prompt: string;
+  status: CoachTemplateJobStatus;
+  template_draft: CoachTemplateDraft | null;
   error: string | null;
   created_at: string;
   completed_at: string | null;
-  context_recorded?: boolean;
-  wants_template?: boolean;
-}): CoachAdviceRequest {
+  accepted_at: string | null;
+  saved_template_id: string | null;
+}): CoachTemplateJob {
   return {
     id: row.id,
     userId: row.user_id,
-    question: row.question,
+    prompt: row.prompt,
     status: row.status,
-    response: row.response ?? null,
+    templateDraft: row.template_draft ?? null,
     error: row.error ?? null,
     createdAt: row.created_at,
     completedAt: row.completed_at ?? null,
-    contextRecorded: row.context_recorded ?? false,
-    wantsTemplate: row.wants_template ?? false,
+    acceptedAt: row.accepted_at ?? null,
+    savedTemplateId: row.saved_template_id ?? null,
   };
 }
 
-/** Latest (only) advice row for the signed-in user — RLS scopes to own rows. */
-export async function getLatestCoachAdviceRequest(): Promise<CoachAdviceRequest | null> {
-  if (!isCoachConfigured()) {
-    return null;
-  }
+export async function getLatestCoachTemplateJob(): Promise<CoachTemplateJob | null> {
+  if (!isCoachConfigured()) return null;
 
   const { data, error } = await withTimeout(
     supabase
-      .from('coach_advice_requests')
+      .from('coach_template_jobs')
       .select('*')
       .order('created_at', { ascending: false })
       .limit(1)
@@ -134,99 +131,57 @@ export async function getLatestCoachAdviceRequest(): Promise<CoachAdviceRequest 
     'Loading coach status',
   );
 
-  if (error) {
-    throw new CoachServiceUnavailableError(error.message);
-  }
-
-  return data ? mapAdviceRow(data) : null;
+  if (error) throw new CoachServiceUnavailableError();
+  return data ? mapJobRow(data) : null;
 }
 
-export async function createCoachAdviceRequest(
-  input: CreateCoachAdviceInput,
-): Promise<CoachAdviceRequest> {
-  if (!isCoachConfigured()) {
-    throw new CoachNotConfiguredError();
-  }
+function throwCoachRpcError(error: { message: string }): never {
+  throw new Error(mapCoachRpcErrorMessage(error.message));
+}
 
-  const question = normalizeCoachQuestion(input.question);
-  const validationMessage = getCoachQuestionValidationMessage(question);
+export async function createCoachTemplateJob(prompt: string): Promise<CoachTemplateJob> {
+  if (!isCoachConfigured()) throw new CoachNotConfiguredError();
 
-  if (validationMessage) {
-    throw new Error(validationMessage);
-  }
+  const normalized = normalizeCoachPrompt(prompt);
+  const validationMessage = getCoachPromptValidationMessage(normalized);
+  if (validationMessage) throw new Error(validationMessage);
 
-  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-  if (sessionError || !sessionData.session?.user?.id) {
+  const { data: userData, error: userError } = await supabase.auth.getUser();
+  if (userError || !userData.user?.id) {
     throw new CoachUnauthorizedError();
   }
 
   const { data, error } = await withTimeout(
-    supabase.rpc('request_coach_advice', {
-      p_question: question,
-      p_wants_template: input.wantsTemplate ?? false,
-    }),
-    'Submitting coach request',
+    supabase.rpc('request_coach_template_job', { p_prompt: normalized }),
+    'Submitting workout request',
   );
 
-  if (error) {
-    throw new CoachServiceUnavailableError(error.message);
-  }
-
-  return mapAdviceRow(data);
+  if (error) throwCoachRpcError(error);
+  return mapJobRow(data);
 }
 
-export async function getCoachAdviceRequest(requestId: string): Promise<CoachAdviceRequest> {
-  if (!isCoachConfigured()) {
-    throw new CoachNotConfiguredError();
-  }
+export async function getCoachTemplateJob(jobId: string): Promise<CoachTemplateJob> {
+  if (!isCoachConfigured()) throw new CoachNotConfiguredError();
 
   const { data, error } = await withTimeout(
-    supabase
-      .from('coach_advice_requests')
-      .select('*')
-      .eq('id', requestId)
-      .single(),
-    'Refreshing coach response',
+    supabase.from('coach_template_jobs').select('*').eq('id', jobId).single(),
+    'Refreshing workout status',
   );
 
-  if (error) {
-    throw new CoachServiceUnavailableError(error.message);
-  }
-
-  return mapAdviceRow(data);
+  if (error) throw new CoachServiceUnavailableError();
+  return mapJobRow(data);
 }
 
-/** Merge a completed advice response summary into coach_context (idempotent). */
-export async function recordCoachAdviceInContext(requestId: string): Promise<void> {
-  const { error } = await withTimeout(
-    supabase.rpc('record_coach_advice_in_context', {
-      p_advice_id: requestId,
-    }),
-    'Recording coach context',
-  );
+export async function acceptCoachTemplateJob(
+  jobId: string,
+  savedTemplateId: string,
+): Promise<void> {
+  const { error } = await supabase.rpc('accept_coach_template_job', {
+    p_job_id: jobId,
+    p_saved_template_id: savedTemplateId,
+  });
 
   if (error) {
-    console.warn('[coach] could not record advice in context:', error.message);
-  }
-}
-
-/** Remove past advice summaries from coach memory (does not delete workout data). */
-export async function clearCoachMemory(): Promise<void> {
-  if (!isCoachConfigured()) {
-    throw new CoachNotConfiguredError();
-  }
-
-  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-  if (sessionError || !sessionData.session?.user?.id) {
-    throw new CoachUnauthorizedError();
-  }
-
-  const { error } = await withTimeout(
-    supabase.rpc('clear_coach_memory'),
-    'Clearing coach memory',
-  );
-
-  if (error) {
-    throw new CoachServiceUnavailableError(error.message);
+    console.warn('[coach] could not mark job accepted:', error.message);
   }
 }

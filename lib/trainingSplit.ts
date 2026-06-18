@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { throwIfSupabaseError } from '@/lib/supabaseError';
 import { fetchExerciseCatalog } from '@/lib/exercises';
 
 export const SPLIT_DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
@@ -6,6 +7,11 @@ export const SPLIT_DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] 
 export type SplitDayKey = (typeof SPLIT_DAY_KEYS)[number];
 
 export type TrainingSplitSchedule = Record<SplitDayKey, string[]>;
+
+export type TrainingSplitState = {
+  enabled: boolean;
+  schedule: TrainingSplitSchedule;
+};
 
 export const SPLIT_DAY_LABELS: Record<SplitDayKey, string> = {
   sun: 'SUN',
@@ -44,11 +50,11 @@ function isSplitDayKey(value: string): value is SplitDayKey {
   return (SPLIT_DAY_KEYS as readonly string[]).includes(value);
 }
 
-export function normalizeTrainingSplit(raw: unknown): TrainingSplitSchedule {
+function normalizeScheduleObject(raw: unknown, fallbackToDefault: boolean): TrainingSplitSchedule {
   const base = emptyTrainingSplit();
 
   if (!raw || typeof raw !== 'object') {
-    return { ...base, ...DEFAULT_TRAINING_SPLIT };
+    return fallbackToDefault ? { ...base, ...DEFAULT_TRAINING_SPLIT } : base;
   }
 
   for (const key of SPLIT_DAY_KEYS) {
@@ -59,6 +65,31 @@ export function normalizeTrainingSplit(raw: unknown): TrainingSplitSchedule {
   }
 
   return dedupeMusclesPerDay(base);
+}
+
+export function parseTrainingSplitResponse(raw: unknown): TrainingSplitState {
+  if (raw && typeof raw === 'object' && 'schedule' in raw) {
+    const row = raw as { enabled?: unknown; schedule?: unknown };
+    const enabled = row.enabled !== false;
+    return {
+      enabled,
+      schedule: normalizeScheduleObject(row.schedule, enabled),
+    };
+  }
+
+  return {
+    enabled: true,
+    schedule: normalizeScheduleObject(raw, true),
+  };
+}
+
+/** @deprecated Use parseTrainingSplitResponse — kept for callers expecting schedule only. */
+export function normalizeTrainingSplit(raw: unknown): TrainingSplitSchedule {
+  return parseTrainingSplitResponse(raw).schedule;
+}
+
+export function isSplitConfigured(state: TrainingSplitState): boolean {
+  return state.enabled;
 }
 
 /** No duplicate muscle on the same day; multiple different groups per day allowed. */
@@ -106,17 +137,22 @@ export async function fetchCatalogMuscleGroups(): Promise<string[]> {
   return [...groups].sort((a, b) => a.localeCompare(b));
 }
 
-export async function fetchTrainingSplit(): Promise<TrainingSplitSchedule> {
+export async function fetchTrainingSplitState(): Promise<TrainingSplitState> {
   const { data, error } = await supabase.rpc('get_training_split');
 
   if (error) {
-    throw new Error(error.message);
+    throwIfSupabaseError(error, 'Could not load training split.');
   }
 
-  return normalizeTrainingSplit(data);
+  return parseTrainingSplitResponse(data);
 }
 
-export async function saveTrainingSplit(schedule: TrainingSplitSchedule): Promise<TrainingSplitSchedule> {
+export async function fetchTrainingSplit(): Promise<TrainingSplitSchedule> {
+  const state = await fetchTrainingSplitState();
+  return state.schedule;
+}
+
+export async function saveTrainingSplit(schedule: TrainingSplitSchedule): Promise<TrainingSplitState> {
   const payload: Record<string, string[]> = {};
   for (const key of SPLIT_DAY_KEYS) {
     payload[key] = schedule[key];
@@ -127,10 +163,20 @@ export async function saveTrainingSplit(schedule: TrainingSplitSchedule): Promis
   });
 
   if (error) {
-    throw new Error(error.message);
+    throwIfSupabaseError(error, 'Could not save training split.');
   }
 
-  return normalizeTrainingSplit(data);
+  return parseTrainingSplitResponse(data);
+}
+
+export async function removeTrainingSplit(): Promise<TrainingSplitState> {
+  const { data, error } = await supabase.rpc('remove_training_split');
+
+  if (error) {
+    throwIfSupabaseError(error, 'Could not remove training split.');
+  }
+
+  return parseTrainingSplitResponse(data);
 }
 
 export function filterScheduleToCatalog(
@@ -186,6 +232,14 @@ export function removeMuscleFromDay(
 export function dayKeyFromDate(date: Date): SplitDayKey {
   const index = date.getDay();
   return SPLIT_DAY_KEYS[index] ?? 'sun';
+}
+
+/** Muscles scheduled for `date`, or null when the user has no split configured. */
+export function getTodaySplitMuscles(state: TrainingSplitState, date = new Date()): string[] | null {
+  if (!isSplitConfigured(state)) {
+    return null;
+  }
+  return [...state.schedule[dayKeyFromDate(date)]];
 }
 
 export function summarizeSplitForDay(schedule: TrainingSplitSchedule, day: SplitDayKey): string {

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { getErrorMessage } from '@/lib/userFacingError';
 import {
   ActivityIndicator,
   Alert,
@@ -46,7 +47,7 @@ export default function StartWorkoutScreen() {
         current && rows.some((row) => row.id === current) ? current : null,
       );
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Could not load templates.';
+      const message = getErrorMessage(error, 'Could not load templates.');
       Alert.alert('Could not load templates', message);
     } finally {
       setLoadingTemplates(false);
@@ -96,7 +97,7 @@ export default function StartWorkoutScreen() {
       const workoutId = await startWorkoutFromTemplate(selectedTemplateId);
       router.replace({ pathname: '/workout-session', params: { workoutId } });
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Could not start workout.';
+      const message = getErrorMessage(error, 'Could not start workout.');
       Alert.alert('Could not start workout', message);
     } finally {
       setGoing(false);
@@ -128,7 +129,7 @@ export default function StartWorkoutScreen() {
 
             await loadTemplates();
           } catch (error) {
-            const message = error instanceof Error ? error.message : 'Could not delete template.';
+            const message = getErrorMessage(error, 'Could not delete template.');
             Alert.alert('Could not delete template', message);
           } finally {
             setDeletingTemplateId(null);

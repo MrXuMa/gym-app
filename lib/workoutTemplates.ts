@@ -8,6 +8,8 @@ import {
 } from '@/lib/workoutSession';
 import { saveActiveWorkoutCache } from '@/lib/workoutSessionStorage';
 import { resolveWorkoutTitle } from '@/lib/workoutDisplay';
+import { draftToSessionExercises, sessionExercisesToContent } from '@/lib/coachTemplate';
+import type { CoachTemplateDraft } from '@/lib/coach';
 import { supabase } from '@/lib/supabase';
 
 export type WorkoutTemplateListItem = {
@@ -15,229 +17,118 @@ export type WorkoutTemplateListItem = {
   name: string;
   exerciseCount: number;
   updatedAt: string;
+  source: 'manual' | 'coach';
 };
 
 export type WorkoutTemplateDetail = {
   id: string;
   name: string;
   exercises: SessionExercise[];
+  source: 'manual' | 'coach';
+  coachJobId: string | null;
 };
 
-type TemplateExerciseRow = {
-  id: string;
-  exercise_id: string;
-  sort_order: number;
-  exercises: { name: string; target_muscle: string | null } | { name: string; target_muscle: string | null }[] | null;
+type TemplateContent = {
+  exercises: CoachTemplateDraft['exercises'];
 };
 
-type TemplateSetRow = {
-  id: string;
-  template_exercise_id: string;
-  set_number: number;
-  reps: number | null;
-  weight: number | null;
-};
-
-function getExerciseMeta(
-  exercises: TemplateExerciseRow['exercises'],
-): { name: string; targetMuscle: string | null } {
-  if (Array.isArray(exercises)) {
-    return { name: exercises[0]?.name ?? 'Exercise', targetMuscle: exercises[0]?.target_muscle ?? null };
-  }
-
-  return { name: exercises?.name ?? 'Exercise', targetMuscle: exercises?.target_muscle ?? null };
+function exerciseCountFromContent(content: TemplateContent | null | undefined): number {
+  return Array.isArray(content?.exercises) ? content.exercises.length : 0;
 }
 
 export async function listWorkoutTemplates(): Promise<WorkoutTemplateListItem[]> {
   const { data, error } = await supabase
     .from('workout_templates')
-    .select('id, name, updated_at, workout_template_exercises(id)')
+    .select('id, name, updated_at, source, content')
     .order('updated_at', { ascending: false });
 
-  if (error) {
-    throw error;
-  }
+  if (error) throw error;
 
-  return (data ?? []).map((row) => {
-    const exerciseRows = row.workout_template_exercises as { id: string }[] | null;
-
-    return {
-      id: row.id,
-      name: row.name,
-      exerciseCount: exerciseRows?.length ?? 0,
-      updatedAt: row.updated_at,
-    };
-  });
+  return (data ?? []).map((row) => ({
+    id: row.id,
+    name: row.name,
+    exerciseCount: exerciseCountFromContent(row.content as TemplateContent),
+    updatedAt: row.updated_at,
+    source: (row.source as 'manual' | 'coach') ?? 'manual',
+  }));
 }
 
 export async function getWorkoutTemplate(templateId: string): Promise<WorkoutTemplateDetail> {
-  const [templateResult, exerciseResult] = await Promise.all([
-    supabase.from('workout_templates').select('id, name').eq('id', templateId).single(),
-    supabase
-      .from('workout_template_exercises')
-      .select('id, exercise_id, sort_order, exercises(name, target_muscle)')
-      .eq('template_id', templateId)
-      .order('sort_order', { ascending: true }),
-  ]);
+  const { data, error } = await supabase
+    .from('workout_templates')
+    .select('id, name, content, source, coach_job_id')
+    .eq('id', templateId)
+    .single();
 
-  if (templateResult.error) {
-    throw templateResult.error;
-  }
+  if (error) throw error;
 
-  if (exerciseResult.error) {
-    throw exerciseResult.error;
-  }
-
-  const templateExerciseRows = exerciseResult.data ?? [];
-  const templateExerciseIds = templateExerciseRows.map((row) => row.id);
-
-  let setRows: TemplateSetRow[] = [];
-
-  if (templateExerciseIds.length > 0) {
-    const setResult = await supabase
-      .from('workout_template_sets')
-      .select('id, template_exercise_id, set_number, reps, weight')
-      .in('template_exercise_id', templateExerciseIds)
-      .order('set_number', { ascending: true });
-
-    if (setResult.error) {
-      throw setResult.error;
-    }
-
-    setRows = (setResult.data ?? []) as TemplateSetRow[];
-  }
-
-  const setsByTemplateExercise = new Map<string, WorkoutSetLog[]>();
-
-  for (const row of setRows) {
-    const sets = setsByTemplateExercise.get(row.template_exercise_id) ?? [];
-    sets.push({
-      id: row.id,
-      exerciseId: '',
-      setNumber: row.set_number,
-      reps: row.reps,
-      weight: row.weight,
-    });
-    setsByTemplateExercise.set(row.template_exercise_id, sets);
-  }
-
-  const exercises: SessionExercise[] = templateExerciseRows.map((row) => {
-    const typed = row as TemplateExerciseRow;
-    const meta = getExerciseMeta(typed.exercises);
-    const sets = (setsByTemplateExercise.get(typed.id) ?? []).map((set) => ({
-      ...set,
-      exerciseId: typed.exercise_id,
-    }));
-
-    return {
-      id: typed.exercise_id,
-      name: meta.name,
-      targetMuscle: meta.targetMuscle,
-      sets: sets.sort((a, b) => a.setNumber - b.setNumber),
-    };
-  });
+  const content = (data.content ?? { exercises: [] }) as TemplateContent;
+  const draft: CoachTemplateDraft = {
+    name: data.name,
+    exercises: content.exercises ?? [],
+  };
 
   return {
-    id: templateResult.data.id,
-    name: templateResult.data.name,
-    exercises,
+    id: data.id,
+    name: data.name,
+    exercises: draftToSessionExercises(draft),
+    source: (data.source as 'manual' | 'coach') ?? 'manual',
+    coachJobId: data.coach_job_id ?? null,
   };
 }
+
+export type SaveWorkoutTemplateOptions = {
+  coachJobId?: string | null;
+};
 
 export async function saveWorkoutTemplate(
   templateId: string | null,
   name: string,
   exercises: SessionExercise[],
+  options: SaveWorkoutTemplateOptions = {},
 ): Promise<string> {
   const trimmedName = resolveWorkoutTitle(name);
+  const content = sessionExercisesToContent(exercises);
+  const coachJobId = options.coachJobId ?? null;
 
-  let id = templateId;
-
-  if (id) {
+  if (templateId) {
     const { error } = await supabase
       .from('workout_templates')
-      .update({ name: trimmedName })
-      .eq('id', id);
-
-    if (error) {
-      throw error;
-    }
-
-    const { error: deleteExercisesError } = await supabase
-      .from('workout_template_exercises')
-      .delete()
-      .eq('template_id', id);
-
-    if (deleteExercisesError) {
-      throw deleteExercisesError;
-    }
-  } else {
-    const { data, error } = await supabase
-      .from('workout_templates')
-      .insert({ name: trimmedName })
-      .select('id')
-      .single();
-
-    if (error) {
-      throw error;
-    }
-
-    id = data.id;
-  }
-
-  for (let index = 0; index < exercises.length; index += 1) {
-    const exercise = exercises[index];
-    const { data: exerciseRow, error: exerciseError } = await supabase
-      .from('workout_template_exercises')
-      .insert({
-        template_id: id,
-        exercise_id: exercise.id,
-        sort_order: index,
+      .update({
+        name: trimmedName,
+        content,
+        updated_at: new Date().toISOString(),
+        ...(coachJobId ? { coach_job_id: coachJobId, source: 'coach' as const } : {}),
       })
-      .select('id')
-      .single();
+      .eq('id', templateId);
 
-    if (exerciseError) {
-      throw exerciseError;
-    }
-
-    const sortedSets = [...exercise.sets].sort((a, b) => a.setNumber - b.setNumber);
-
-    for (let setIndex = 0; setIndex < sortedSets.length; setIndex += 1) {
-      const set = sortedSets[setIndex];
-      const { error: setError } = await supabase.from('workout_template_sets').insert({
-        template_exercise_id: exerciseRow.id,
-        set_number: setIndex + 1,
-        reps: set.reps,
-        weight: set.weight,
-      });
-
-      if (setError) {
-        throw setError;
-      }
-    }
+    if (error) throw error;
+    return templateId;
   }
 
-  if (!id) {
-    throw new Error('Could not save template.');
-  }
+  const { data, error } = await supabase
+    .from('workout_templates')
+    .insert({
+      name: trimmedName,
+      content,
+      source: coachJobId ? 'coach' : 'manual',
+      coach_job_id: coachJobId,
+    })
+    .select('id')
+    .single();
 
-  return id;
+  if (error) throw error;
+  return data.id;
 }
 
 export async function deleteWorkoutTemplate(templateId: string): Promise<void> {
   const { error } = await supabase.from('workout_templates').delete().eq('id', templateId);
-
-  if (error) {
-    throw error;
-  }
+  if (error) throw error;
 }
 
 export async function startWorkoutFromTemplate(templateId: string): Promise<string> {
   const existing = await getActiveWorkoutSession();
-  if (existing) {
-    return existing.id;
-  }
+  if (existing) return existing.id;
 
   const template = await getWorkoutTemplate(templateId);
 
@@ -246,7 +137,6 @@ export async function startWorkoutFromTemplate(templateId: string): Promise<stri
   }
 
   const session = await createActiveWorkoutSession(resolveWorkoutTitle(template.name));
-
   const exerciseIds: string[] = [];
 
   for (const exercise of template.exercises) {
@@ -254,7 +144,6 @@ export async function startWorkoutFromTemplate(templateId: string): Promise<stri
     await addExerciseToActiveSession(session.id, exercise.id);
 
     const sortedSets = [...exercise.sets].sort((a, b) => a.setNumber - b.setNumber);
-
     for (const set of sortedSets) {
       await addWorkoutSet(session.id, exercise.id, set.reps, set.weight);
     }

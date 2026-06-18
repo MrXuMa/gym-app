@@ -2,39 +2,35 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   CoachServiceUnavailableError,
   CoachUnauthorizedError,
-  clearCoachMemory,
-  createCoachAdviceRequest,
-  getCoachAdviceRequest,
-  getLatestCoachAdviceRequest,
-  isCoachAdviceTerminal,
+  createCoachTemplateJob,
+  getCoachTemplateJob,
+  getLatestCoachTemplateJob,
   isCoachConfigured,
-  recordCoachAdviceInContext,
-  type CoachAdviceRequest,
+  isCoachJobTerminal,
+  type CoachTemplateJob,
 } from '@/lib/coach';
+import { getErrorMessage } from '@/lib/userFacingError';
 
 const POLL_INTERVAL_MS = 4_000;
 const MAX_POLL_FAILURES = 3;
 
 export type UseCoachResult = {
-  request: CoachAdviceRequest | null;
+  job: CoachTemplateJob | null;
   loading: boolean;
   refreshing: boolean;
   submitting: boolean;
-  clearingMemory: boolean;
   isConfigured: boolean;
   connectionError: string | null;
   refresh: () => Promise<void>;
-  requestAdvice: (question: string, wantsTemplate?: boolean) => Promise<CoachAdviceRequest | null>;
-  clearMemory: () => Promise<void>;
+  requestWorkout: (prompt: string) => Promise<CoachTemplateJob | null>;
 };
 
 export function useCoach(): UseCoachResult {
   const isConfigured = isCoachConfigured();
-  const [request, setRequest] = useState<CoachAdviceRequest | null>(null);
+  const [job, setJob] = useState<CoachTemplateJob | null>(null);
   const [loading, setLoading] = useState(isConfigured);
   const [refreshing, setRefreshing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [clearingMemory, setClearingMemory] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollFailuresRef = useRef(0);
@@ -42,20 +38,15 @@ export function useCoach(): UseCoachResult {
 
   const fetchLatest = useCallback(async () => {
     if (!isConfigured) {
-      setRequest(null);
+      setJob(null);
       setConnectionError(null);
       return;
     }
 
-    const data = await getLatestCoachAdviceRequest();
-    setRequest(data);
+    const data = await getLatestCoachTemplateJob();
+    setJob(data);
     setConnectionError(null);
     pollFailuresRef.current = 0;
-
-    if (data?.status === 'completed' && !data.contextRecorded) {
-      await recordCoachAdviceInContext(data.id);
-      setRequest({ ...data, contextRecorded: true });
-    }
   }, [isConfigured]);
 
   const load = useCallback(
@@ -80,7 +71,7 @@ export function useCoach(): UseCoachResult {
         } else if (error instanceof CoachUnauthorizedError) {
           setConnectionError(error.message);
         } else {
-          setConnectionError('Could not load coach advice.');
+          setConnectionError(getErrorMessage(error, 'Could not load workout status.'));
         }
       } finally {
         setLoading(false);
@@ -98,56 +89,34 @@ export function useCoach(): UseCoachResult {
     await load({ pullToRefresh: true });
   }, [load]);
 
-  const requestAdvice = useCallback(
-    async (question: string, wantsTemplate = false): Promise<CoachAdviceRequest | null> => {
-      setSubmitting(true);
-
-      try {
-        const created = await createCoachAdviceRequest({ question, wantsTemplate });
-        setRequest(created);
-        setConnectionError(null);
-        pollFailuresRef.current = 0;
-        return created;
-      } catch (error) {
-        if (error instanceof CoachServiceUnavailableError) {
-          setConnectionError(error.message);
-        } else if (error instanceof CoachUnauthorizedError) {
-          setConnectionError(error.message);
-        }
-        throw error;
-      } finally {
-        setSubmitting(false);
-      }
-    },
-    [],
-  );
-
-  const clearMemory = useCallback(async () => {
-    setClearingMemory(true);
+  const requestWorkout = useCallback(async (prompt: string): Promise<CoachTemplateJob | null> => {
+    setSubmitting(true);
 
     try {
-      await clearCoachMemory();
+      const created = await createCoachTemplateJob(prompt);
+      setJob(created);
       setConnectionError(null);
+      pollFailuresRef.current = 0;
+      return created;
     } catch (error) {
       if (error instanceof CoachServiceUnavailableError) {
         setConnectionError(error.message);
       } else if (error instanceof CoachUnauthorizedError) {
         setConnectionError(error.message);
+      } else {
+        setConnectionError(getErrorMessage(error, 'Could not request workout.'));
       }
       throw error;
     } finally {
-      setClearingMemory(false);
+      setSubmitting(false);
     }
   }, []);
 
   const shouldPoll =
-    isConfigured &&
-    request !== null &&
-    !isCoachAdviceTerminal(request.status) &&
-    !connectionError;
+    isConfigured && job !== null && !isCoachJobTerminal(job.status) && !connectionError;
 
   useEffect(() => {
-    if (!shouldPoll || !request) {
+    if (!shouldPoll || !job) {
       if (pollTimerRef.current) {
         clearInterval(pollTimerRef.current);
         pollTimerRef.current = null;
@@ -155,25 +124,18 @@ export function useCoach(): UseCoachResult {
       return;
     }
 
-    const requestId = request.id;
+    const jobId = job.id;
 
     async function poll() {
       try {
-        const updated = await getCoachAdviceRequest(requestId);
-        setRequest(updated);
+        const updated = await getCoachTemplateJob(jobId);
+        setJob(updated);
         pollFailuresRef.current = 0;
-
-        if (updated.status === 'completed' && !updated.contextRecorded) {
-          await recordCoachAdviceInContext(updated.id);
-          setRequest((current) =>
-            current?.id === updated.id ? { ...updated, contextRecorded: true } : current,
-          );
-        }
       } catch {
         pollFailuresRef.current += 1;
         if (pollFailuresRef.current >= MAX_POLL_FAILURES) {
           setConnectionError(
-            'Could not refresh advice status. Check your connection and pull to refresh.',
+            'Could not refresh workout status. Check your connection and pull to refresh.',
           );
         }
       }
@@ -190,18 +152,16 @@ export function useCoach(): UseCoachResult {
         pollTimerRef.current = null;
       }
     };
-  }, [shouldPoll, request?.id, request?.status, connectionError]);
+  }, [shouldPoll, job?.id, job?.status, connectionError]);
 
   return {
-    request,
+    job,
     loading,
     refreshing,
     submitting,
-    clearingMemory,
     isConfigured,
     connectionError,
     refresh,
-    requestAdvice,
-    clearMemory,
+    requestWorkout,
   };
 }

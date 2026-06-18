@@ -1,17 +1,15 @@
 import { supabase } from '@/lib/supabase';
+import { dayKeyEastern, countMealsInNutritionRows, mondayOfWeekContaining, weekDateKeysFromMonday } from '@/lib/foodAnalysis';
 import {
   summarizeWeightLogs,
   weightTrendToLabel,
   WEIGHT_TREND_WINDOW_DAYS,
   type WeightTrendLabel,
 } from '@/lib/weightTrend';
+import { changeSinceLastEntry } from '@/lib/weightWidgetHelpers';
+import { getTodaySplitMuscles, parseTrainingSplitResponse } from '@/lib/trainingSplit';
 
 const BENCH_EXERCISE_PATTERN = /bench/i;
-
-function toDateKey(iso: string) {
-  const date = new Date(iso);
-  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
-}
 
 function startOfWeek(date: Date) {
   const start = new Date(date);
@@ -33,54 +31,28 @@ function epleyOneRepMax(weight: number, reps: number) {
   return Math.round(weight * (1 + reps / 30));
 }
 
-/**
- * Strict-today streak: returns the number of consecutive days (including today)
- * the user has logged a workout. If there is no workout dated today, the streak
- * is 0 — historical sequences without a tail at today do not count.
- *
- * Mirrors vm/coach-worker/contextMerge.js#computeStreak so the home widget and
- * coach context never disagree.
- */
-function computeStreak(workoutDates: string[]) {
-  if (workoutDates.length === 0) {
-    return 0;
-  }
-
-  const dayKeys = new Set(workoutDates.map(toDateKey));
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  if (!dayKeys.has(toDateKey(today.toISOString()))) {
-    return 0;
-  }
-
-  let streak = 0;
-  const cursor = new Date(today);
-  while (dayKeys.has(toDateKey(cursor.toISOString()))) {
-    streak += 1;
-    cursor.setDate(cursor.getDate() - 1);
-  }
-
-  return streak;
-}
-
-export type WeightHistoryPoint = {
-  recordedAt: string;
-  weight: number;
-};
-
 export type HomeMetrics = {
-  streakDays: number;
   workoutsThisWeek: number;
   currentWeight: number | null;
   weightTrendLabel: WeightTrendLabel;
   weightChangeLbs: number | null;
   weightTrendSpanDays: number | null;
+  /** Latest log minus the previous log (entry-to-entry). */
+  weightChangeSinceLastLbs: number | null;
   predictedMax: number | null;
   predictedLiftName: string;
   predictedLiftExerciseId: string | null;
   /** Full body-weight log series (oldest → newest), used by the graph widget. */
   weightHistory: WeightHistoryPoint[];
+  /** Eastern calendar day nutrition totals (zeros when nothing logged). */
+  todayCalories: number;
+  todayProteinG: number;
+  todayCarbsG: number;
+  todayFatG: number;
+  /** Today's split muscle groups, or null when no split is configured. */
+  todaySplitMuscles: string[] | null;
+  /** Meal entries logged Mon–Sun this week (Eastern calendar). */
+  mealsThisWeek: number;
 };
 
 export type FetchHomeMetricsOptions = {
@@ -91,16 +63,22 @@ export async function fetchHomeMetrics(
   options: FetchHomeMetricsOptions = {},
 ): Promise<HomeMetrics> {
   const defaultMetrics: HomeMetrics = {
-    streakDays: 0,
     workoutsThisWeek: 0,
     currentWeight: null,
     weightTrendLabel: '—',
     weightChangeLbs: null,
     weightTrendSpanDays: null,
+    weightChangeSinceLastLbs: null,
     predictedMax: null,
     predictedLiftName: 'Bench Press',
     predictedLiftExerciseId: null,
     weightHistory: [],
+    todayCalories: 0,
+    todayProteinG: 0,
+    todayCarbsG: 0,
+    todayFatG: 0,
+    todaySplitMuscles: null,
+    mealsThisWeek: 0,
   };
 
   const { data: userResult, error: userError } = await supabase.auth.getUser();
@@ -113,7 +91,11 @@ export async function fetchHomeMetrics(
   const weightTrendCutoff = new Date();
   weightTrendCutoff.setDate(weightTrendCutoff.getDate() - WEIGHT_TREND_WINDOW_DAYS);
 
-  const [profileResult, workoutsResult, exercisesResult, weightLogsResult] = await Promise.all([
+  const weekStartMonday = mondayOfWeekContaining(dayKeyEastern());
+  const weekDateKeys = weekDateKeysFromMonday(weekStartMonday);
+
+  const [profileResult, workoutsResult, exercisesResult, weightLogsResult, nutritionResult, splitResult, weekNutritionResult] =
+    await Promise.all([
     supabase.from('profiles_with_age').select('weight').eq('id', userId).maybeSingle(),
     supabase
       .from('user_workouts')
@@ -125,6 +107,13 @@ export async function fetchHomeMetrics(
       .from('body_weight_logs')
       .select('weight, recorded_at')
       .order('recorded_at', { ascending: true }),
+    supabase
+      .from('nutrition_logs')
+      .select('kcal, protein_g, carbs_g, fat_g')
+      .eq('log_date', dayKeyEastern())
+      .maybeSingle(),
+    supabase.rpc('get_training_split'),
+    supabase.from('nutrition_logs').select('entries').in('log_date', weekDateKeys),
   ]);
 
   const workoutDates = (workoutsResult.data ?? [])
@@ -132,7 +121,6 @@ export async function fetchHomeMetrics(
     .filter((date): date is string => Boolean(date));
 
   const workoutsThisWeek = workoutDates.filter((date) => new Date(date) >= weekStart).length;
-  const streakDays = computeStreak(workoutDates);
 
   const currentWeight = profileResult.data?.weight ?? null;
 
@@ -184,17 +172,34 @@ export async function fetchHomeMetrics(
     (row) => new Date(row.recordedAt) >= weightTrendCutoff,
   );
   const weightSummary = summarizeWeightLogs(recentWeightLogs);
+  const weightChangeSinceLastLbs = changeSinceLastEntry(allWeightLogs);
+
+  const nutritionRow = nutritionResult.data;
+  const todayCalories = Math.round(nutritionRow?.kcal ?? 0);
+  const todayProteinG = Number(nutritionRow?.protein_g ?? 0);
+  const todayCarbsG = Number(nutritionRow?.carbs_g ?? 0);
+  const todayFatG = Number(nutritionRow?.fat_g ?? 0);
+  const todaySplitMuscles = splitResult.error
+    ? null
+    : getTodaySplitMuscles(parseTrainingSplitResponse(splitResult.data));
+  const mealsThisWeek = countMealsInNutritionRows(weekNutritionResult.data ?? []);
 
   return {
-    streakDays,
     workoutsThisWeek,
     currentWeight: weightSummary.latestLbs ?? currentWeight,
     weightTrendLabel: weightTrendToLabel(weightSummary.trend),
     weightChangeLbs: weightSummary.changeLbs,
     weightTrendSpanDays: weightSummary.spanDays,
+    weightChangeSinceLastLbs,
     predictedMax,
     predictedLiftName,
     predictedLiftExerciseId,
     weightHistory: allWeightLogs,
+    todayCalories,
+    todayProteinG,
+    todayCarbsG,
+    todayFatG,
+    todaySplitMuscles,
+    mealsThisWeek,
   };
 }

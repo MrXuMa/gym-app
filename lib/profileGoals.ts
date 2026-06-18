@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { normalizeGoalSlots } from '@/lib/goals';
+import { throwIfSupabaseError } from '@/lib/supabaseError';
 
 export async function saveProfileGoals(slots: string[]): Promise<string[]> {
   const goals = normalizeGoalSlots(slots);
@@ -13,10 +14,8 @@ export async function saveProfileGoals(slots: string[]): Promise<string[]> {
   });
 
   if (error) {
-    throw new Error(error.message);
+    throwIfSupabaseError(error, 'Could not save goals.');
   }
-
-  return Array.isArray(data) ? data : goals;
 }
 
 export async function fetchProfileGoals(): Promise<string[]> {
@@ -32,8 +31,6 @@ export async function fetchProfileGoals(): Promise<string[]> {
     .maybeSingle();
 
   if (error) {
-    throw new Error(error.message);
+    throwIfSupabaseError(error, 'Could not load goals.');
   }
-
-  return Array.isArray(data?.goals) ? data.goals.filter(Boolean) : [];
 }

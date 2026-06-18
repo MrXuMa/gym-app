@@ -2,17 +2,14 @@ import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { MarkdownText } from '@/components/ui/MarkdownText';
-import type { CoachAdviceRequest, CoachAdviceStatus } from '@/lib/coach';
-import type { CoachTemplateProposalStatus } from '@/lib/coachTemplate';
+import type { CoachTemplateJob, CoachTemplateJobStatus } from '@/lib/coach';
+import { sanitizeCoachJobError } from '@/lib/userFacingError';
 import { homeTheme } from '@/constants/theme';
 
 type CoachAdviceCardProps = {
-  request: CoachAdviceRequest;
-  templateProposalStatus?: CoachTemplateProposalStatus | null;
-  templateBusy?: boolean;
-  onCreateTemplate?: () => void;
+  job: CoachTemplateJob;
   onReviewTemplate?: () => void;
+  onRetry?: () => void;
 };
 
 function formatRelativeTime(iso: string): string {
@@ -20,40 +17,33 @@ function formatRelativeTime(iso: string): string {
   const diffMs = Date.now() - date.getTime();
   const diffMin = Math.floor(diffMs / 60_000);
 
-  if (diffMin < 1) {
-    return 'Just now';
-  }
-
-  if (diffMin < 60) {
-    return `${diffMin}m ago`;
-  }
+  if (diffMin < 1) return 'Just now';
+  if (diffMin < 60) return `${diffMin}m ago`;
 
   const diffHours = Math.floor(diffMin / 60);
-  if (diffHours < 24) {
-    return `${diffHours}h ago`;
-  }
+  if (diffHours < 24) return `${diffHours}h ago`;
 
   return date.toLocaleDateString();
 }
 
-function pendingHint(request: CoachAdviceRequest): string {
-  const ageMs = Date.now() - new Date(request.createdAt).getTime();
+function pendingHint(job: CoachTemplateJob): string {
+  const ageMs = Date.now() - new Date(job.createdAt).getTime();
   const stale = ageMs > 2 * 60_000;
 
-  if (request.status === 'running') {
+  if (job.status === 'running') {
     return stale
-      ? 'Still generating — the first response can take a minute while the coach loads.'
-      : 'Generating advice from your training context…';
+      ? 'Still generating — the first template can take a minute while the model loads.'
+      : 'Building your workout from split, goals, and logs…';
   }
 
   if (stale) {
-    return 'Queued for a while — pull to refresh. Advice is processed in the background.';
+    return 'Queued for a while — pull to refresh. Templates are processed in the background.';
   }
 
   return 'Queued — waiting for the coach to pick this up.';
 }
 
-function statusMeta(status: CoachAdviceStatus): {
+function statusMeta(status: CoachTemplateJobStatus): {
   label: string;
   icon: keyof typeof Ionicons.glyphMap;
   color: string;
@@ -70,29 +60,10 @@ function statusMeta(status: CoachAdviceStatus): {
   }
 }
 
-function templateStatusLabel(status: CoachTemplateProposalStatus): string {
-  switch (status) {
-    case 'pending':
-      return 'Queued — building your template draft…';
-    case 'running':
-      return 'Generating template from this advice…';
-    case 'completed':
-      return 'Template draft is ready to review.';
-    case 'failed':
-      return 'Template generation failed. Try again.';
-  }
-}
-
-export function CoachAdviceCard({
-  request,
-  templateProposalStatus,
-  templateBusy = false,
-  onCreateTemplate,
-  onReviewTemplate,
-}: CoachAdviceCardProps) {
-  const meta = statusMeta(request.status);
-  const isInProgress = request.status === 'pending' || request.status === 'running';
-  const showTemplateActions = request.status === 'completed' && Boolean(onCreateTemplate);
+export function CoachAdviceCard({ job, onReviewTemplate, onRetry }: CoachAdviceCardProps) {
+  const meta = statusMeta(job.status);
+  const isInProgress = job.status === 'pending' || job.status === 'running';
+  const promptLabel = job.prompt.trim() || "Today's split + goals";
 
   return (
     <Card style={styles.card}>
@@ -104,46 +75,29 @@ export function CoachAdviceCard({
             <Ionicons name={meta.icon} size={18} color={meta.color} />
           )}
           <Text style={[styles.statusLabel, { color: meta.color }]}>{meta.label}</Text>
-          <Text style={styles.time}>{formatRelativeTime(request.createdAt)}</Text>
+          <Text style={styles.time}>{formatRelativeTime(job.createdAt)}</Text>
         </View>
       </View>
 
-      <Text style={styles.question}>{request.question}</Text>
+      <Text style={styles.question}>{promptLabel}</Text>
 
-      {request.status === 'completed' && request.response ? (
-        <MarkdownText style={styles.response}>{request.response}</MarkdownText>
-      ) : null}
-
-      {request.status === 'failed' && request.error ? (
-        <Text style={styles.error}>{request.error}</Text>
+      {job.status === 'failed' && job.error ? (
+        <Text style={styles.error}>{sanitizeCoachJobError(job.error)}</Text>
       ) : null}
 
       {isInProgress ? (
-        <Text style={styles.pendingHint}>{pendingHint(request)}</Text>
+        <Text style={styles.pendingHint}>{pendingHint(job)}</Text>
       ) : null}
 
-      {showTemplateActions ? (
+      {job.status === 'failed' && onRetry ? (
         <View style={styles.templateSection}>
-          {templateProposalStatus === 'pending' || templateProposalStatus === 'running' ? (
-            <View style={styles.templateGenerating}>
-              <ActivityIndicator size="small" color={homeTheme.colors.primary} />
-              <Text style={styles.templateHint}>{templateStatusLabel(templateProposalStatus)}</Text>
-            </View>
-          ) : templateProposalStatus === 'completed' && onReviewTemplate ? (
-            <Button label="Review template draft" onPress={onReviewTemplate} fullWidth />
-          ) : (
-            <Button
-              label={templateProposalStatus === 'failed' ? 'Retry template draft' : 'Create workout template'}
-              variant="outline"
-              onPress={onCreateTemplate}
-              loading={templateBusy}
-              fullWidth
-            />
-          )}
+          <Button label="Try again" onPress={onRetry} fullWidth />
+        </View>
+      ) : null}
 
-          {templateProposalStatus === 'failed' ? (
-            <Text style={styles.templateHint}>{templateStatusLabel('failed')}</Text>
-          ) : null}
+      {job.status === 'completed' && onReviewTemplate ? (
+        <View style={styles.templateSection}>
+          <Button label="Review template draft" onPress={onReviewTemplate} fullWidth />
         </View>
       ) : null}
     </Card>
@@ -183,11 +137,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     lineHeight: 21,
   },
-  response: {
-    color: homeTheme.colors.cardForeground,
-    fontSize: 14,
-    lineHeight: 21,
-  },
   error: {
     color: homeTheme.colors.destructive,
     fontSize: 13,
@@ -200,20 +149,8 @@ const styles = StyleSheet.create({
   },
   templateSection: {
     marginTop: 4,
-    gap: 10,
     paddingTop: 10,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: homeTheme.colors.border,
-  },
-  templateGenerating: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  templateHint: {
-    flex: 1,
-    color: homeTheme.colors.mutedForeground,
-    fontSize: 12,
-    lineHeight: 17,
   },
 });

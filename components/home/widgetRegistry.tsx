@@ -2,11 +2,16 @@ import type { ReactElement } from 'react';
 import type { Ionicons } from '@expo/vector-icons';
 import type { HomeMetrics } from '@/lib/homeMetrics';
 import { WIDGET_IDS, type WidgetId } from '@/lib/widgetSettings';
-import { StreakWidget } from '@/components/home/widgets/StreakWidget';
+import type { WidgetSize } from '@/components/home/widgetSizing';
 import { PredictedMaxWidget } from '@/components/home/widgets/PredictedMaxWidget';
 import { WeightTrendWidget } from '@/components/home/widgets/WeightTrendWidget';
 import { WeekSummaryWidget } from '@/components/home/widgets/WeekSummaryWidget';
-import { BodyWeightGraphWidget } from '@/components/home/widgets/BodyWeightGraphWidget';
+import { DailyCaloriesWidget } from '@/components/home/widgets/DailyCaloriesWidget';
+import { TodaySplitWidget } from '@/components/home/widgets/TodaySplitWidget';
+import { WeekMealsWidget } from '@/components/home/widgets/WeekMealsWidget';
+import { TaskBulletinWidget } from '@/components/home/widgets/TaskBulletinWidget';
+import { getRecentWeightEntries } from '@/lib/weightWidgetHelpers';
+import { requestBulletinAdd } from '@/lib/bulletinTaskUi';
 
 export type WidgetEditAction = {
   id: string;
@@ -26,6 +31,8 @@ export type WidgetRenderResult = {
 export type WidgetCallbacks = {
   openPredictedMaxPicker: () => void;
   openWorkouts: () => void;
+  openLog: () => void;
+  openTrainingSplit: () => void;
 };
 
 export type WidgetRenderContext = {
@@ -37,36 +44,21 @@ export type WidgetDefinition = {
   id: WidgetId;
   title: string;
   description: string;
-  /** Grid columns the widget occupies. 1 = half-row, 2 = full-row. */
-  widthSpan: 1 | 2;
+  size: WidgetSize;
   iconName: keyof typeof Ionicons.glyphMap;
   render(ctx: WidgetRenderContext): WidgetRenderResult;
 };
 
 const REGISTRY: Record<WidgetId, WidgetDefinition> = {
-  streak: {
-    id: 'streak',
-    title: 'Streak',
-    description: 'Consecutive days of logged workouts.',
-    widthSpan: 1,
-    iconName: 'flame-outline',
-    render: ({ metrics }) => ({
-      element: (
-        <StreakWidget size="compact" minimal streakDays={metrics.streakDays} />
-      ),
-    }),
-  },
   'predicted-max': {
     id: 'predicted-max',
     title: 'Predicted max',
     description: 'Estimated 1RM for the lift you choose.',
-    widthSpan: 1,
+    size: 'small',
     iconName: 'barbell-outline',
     render: ({ metrics, callbacks }) => ({
       element: (
         <PredictedMaxWidget
-          size="compact"
-          minimal
           liftName={metrics.predictedLiftName}
           predictedMax={metrics.predictedMax}
         />
@@ -84,18 +76,15 @@ const REGISTRY: Record<WidgetId, WidgetDefinition> = {
   'weight-trend': {
     id: 'weight-trend',
     title: 'Body weight',
-    description: 'Latest weight and 90-day trend summary.',
-    widthSpan: 1,
+    description: 'Latest weight and change since your last log.',
+    size: 'small',
     iconName: 'speedometer-outline',
     render: ({ metrics }) => ({
       element: (
         <WeightTrendWidget
-          size="compact"
-          minimal
           currentWeight={metrics.currentWeight}
-          trendLabel={metrics.weightTrendLabel}
-          changeLbs={metrics.weightChangeLbs}
-          spanDays={metrics.weightTrendSpanDays}
+          changeSinceLastLbs={metrics.weightChangeSinceLastLbs}
+          recentWeights={getRecentWeightEntries(metrics.weightHistory, 7).map((point) => point.weight)}
         />
       ),
     }),
@@ -104,27 +93,69 @@ const REGISTRY: Record<WidgetId, WidgetDefinition> = {
     id: 'week-summary',
     title: 'This week',
     description: 'Workouts logged so far this week.',
-    widthSpan: 1,
+    size: 'small',
     iconName: 'calendar-outline',
     render: ({ metrics, callbacks }) => ({
-      element: (
-        <WeekSummaryWidget
-          size="compact"
-          minimal
-          workoutsThisWeek={metrics.workoutsThisWeek}
-        />
-      ),
+      element: <WeekSummaryWidget workoutsThisWeek={metrics.workoutsThisWeek} />,
       onPress: callbacks.openWorkouts,
     }),
   },
-  'body-weight-graph': {
-    id: 'body-weight-graph',
-    title: 'Body weight graph',
-    description: 'Full history of logged body-weight entries.',
-    widthSpan: 2,
-    iconName: 'analytics-outline',
-    render: ({ metrics }) => ({
-      element: <BodyWeightGraphWidget weightHistory={metrics.weightHistory} />,
+  'daily-calories': {
+    id: 'daily-calories',
+    title: 'Calories today',
+    description: "Today's food log total in kilocalories.",
+    size: 'small',
+    iconName: 'restaurant-outline',
+    render: ({ metrics, callbacks }) => ({
+      element: (
+        <DailyCaloriesWidget
+          kcal={metrics.todayCalories}
+          protein_g={metrics.todayProteinG}
+          carbs_g={metrics.todayCarbsG}
+          fat_g={metrics.todayFatG}
+        />
+      ),
+      onPress: callbacks.openLog,
+    }),
+  },
+  'today-split': {
+    id: 'today-split',
+    title: 'Hit today',
+    description: "Today's muscle groups from your training split.",
+    size: 'small',
+    iconName: 'fitness-outline',
+    render: ({ metrics, callbacks }) => ({
+      element: <TodaySplitWidget muscles={metrics.todaySplitMuscles} />,
+      onPress: callbacks.openTrainingSplit,
+    }),
+  },
+  'week-meals': {
+    id: 'week-meals',
+    title: 'Meals this week',
+    description: 'Meal entries logged so far this week.',
+    size: 'small',
+    iconName: 'fast-food-outline',
+    render: ({ metrics, callbacks }) => ({
+      element: <WeekMealsWidget mealsThisWeek={metrics.mealsThisWeek} />,
+      onPress: callbacks.openLog,
+    }),
+  },
+  'task-bulletin': {
+    id: 'task-bulletin',
+    title: 'Task bulletin',
+    description: 'Temporary and recurring daily tasks (up to 15).',
+    size: 'large',
+    iconName: 'checkbox-outline',
+    render: () => ({
+      element: <TaskBulletinWidget />,
+      editActions: [
+        {
+          id: 'add-task',
+          label: 'Add task',
+          iconName: 'add-circle-outline',
+          onSelect: requestBulletinAdd,
+        },
+      ],
     }),
   },
 };

@@ -5,16 +5,11 @@ import { WidgetCard } from '@/components/home/WidgetCard';
 
 type WeekSummaryWidgetProps = {
   size?: WidgetSize;
-  minimal?: boolean;
   workoutsThisWeek: number;
 };
 
-export function WeekSummaryWidget({
-  size = 'compact',
-  minimal = false,
-  workoutsThisWeek,
-}: WeekSummaryWidgetProps) {
-  const sizing = getWidgetSizing(size, minimal);
+export function WeekSummaryWidget({ size = 'small', workoutsThisWeek }: WeekSummaryWidgetProps) {
+  const sizing = getWidgetSizing(size);
   const subtext =
     workoutsThisWeek === 0
       ? 'No workouts logged this week yet.'
@@ -23,7 +18,7 @@ export function WeekSummaryWidget({
         : `${workoutsThisWeek} sessions logged. Tap for history.`;
 
   return (
-    <WidgetCard title="This week" size={size} minimal={minimal}>
+    <WidgetCard title="This week" size={size}>
       <View style={styles.valueBlock}>
         <Text style={[styles.value, { fontSize: sizing.valueFontSize }]}>{workoutsThisWeek}</Text>
         <Text style={[styles.unit, { fontSize: sizing.unitFontSize }]}>workouts</Text>

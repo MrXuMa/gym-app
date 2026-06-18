@@ -3,6 +3,7 @@ import { ActivityIndicator, Alert, FlatList, Pressable, ScrollView, StyleSheet, 
 import { AppScreen } from '@/components/layout/AppScreen';
 import { fetchExerciseCatalog } from '@/lib/exercises';
 import { homeTheme } from '@/constants/theme';
+import { getErrorMessage } from '@/lib/userFacingError';
 
 const ALL_MUSCLES = 'All';
 
@@ -18,7 +19,7 @@ export default function ExercisesScreen() {
         const rows = await fetchExerciseCatalog();
         setExercises(rows);
       } catch (error) {
-        const message = error instanceof Error ? error.message : 'Could not load exercises.';
+        const message = getErrorMessage(error, 'Could not load exercises.');
         Alert.alert('Could not load exercises', message);
       } finally {
         setLoading(false);

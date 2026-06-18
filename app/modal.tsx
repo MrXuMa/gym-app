@@ -9,6 +9,7 @@ import { type DraggableExerciseListRef } from '@/components/workout-session/Drag
 import { WorkoutExerciseEditorBody } from '@/components/workout-session/WorkoutExerciseEditorBody';
 import { WorkoutMetaHeader } from '@/components/workout-session/WorkoutMetaHeader';
 import { createExerciseCardRenderer } from '@/components/workout-session/renderExerciseSessionCard';
+import { getErrorMessage } from '@/lib/userFacingError';
 import {
   WORKOUT_EDITOR_COPY,
   workoutEditorStyles as styles,
@@ -88,7 +89,7 @@ export default function EditWorkoutScreen() {
       setDurationSeconds(workoutMeta.data.duration_seconds);
       setAllExercises(catalog);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Could not load workout.';
+      const message = getErrorMessage(error, 'Could not load workout.');
       Alert.alert('Could not load workout', message);
     } finally {
       setLoading(false);
@@ -172,7 +173,7 @@ export default function EditWorkoutScreen() {
             await deleteWorkout(workoutId);
             router.back();
           } catch (error) {
-            const message = error instanceof Error ? error.message : 'Could not delete workout.';
+            const message = getErrorMessage(error, 'Could not delete workout.');
             Alert.alert('Delete failed', message);
           } finally {
             setDeleting(false);

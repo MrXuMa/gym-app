@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { throwIfSupabaseError } from '@/lib/supabaseError';
 
 export const WEIGHT_MIN_LBS = 0.1;
 export const WEIGHT_MAX_LBS = 1000;
@@ -40,10 +41,8 @@ export async function updateProfileWeight(weight: number): Promise<number> {
   });
 
   if (error) {
-    throw new Error(error.message);
+    throwIfSupabaseError(error, 'Could not update weight.');
   }
-
-  return typeof data === 'number' ? data : weight;
 }
 
 export type WeightLogEntry = {
@@ -61,7 +60,7 @@ export async function fetchRecentWeightLogs(limit = 10): Promise<WeightLogEntry[
     .limit(limit);
 
   if (error) {
-    throw new Error(error.message);
+    throwIfSupabaseError(error, 'Could not load weight history.');
   }
 
   return (data ?? []).map((row) => ({
@@ -79,7 +78,7 @@ export async function deleteWeightLog(logId: string): Promise<number | null> {
   });
 
   if (error) {
-    throw new Error(error.message);
+    throwIfSupabaseError(error, 'Could not delete weight log.');
   }
 
   return typeof data === 'number' ? data : null;

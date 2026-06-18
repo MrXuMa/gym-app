@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { getErrorMessage } from '@/lib/userFacingError';
 import {
   ActivityIndicator,
   Alert,
@@ -33,18 +34,15 @@ import {
 } from '@/lib/workoutTemplates';
 import type { SessionExercise, WorkoutSetLog } from '@/lib/workoutSession';
 import { fetchExerciseCatalog } from '@/lib/exercises';
-import {
-  acceptCoachTemplateProposal,
-  draftToSessionExercises,
-  getCoachTemplateProposal,
-} from '@/lib/coachTemplate';
+import { draftToSessionExercises } from '@/lib/coachTemplate';
+import { acceptCoachTemplateJob, getCoachTemplateJob } from '@/lib/coach';
 import { homeTheme } from '@/constants/theme';
 
 export default function WorkoutTemplateEditorScreen() {
   const router = useRouter();
-  const { templateId, proposalId } = useLocalSearchParams<{ templateId?: string; proposalId?: string }>();
+  const { templateId, jobId } = useLocalSearchParams<{ templateId?: string; jobId?: string }>();
   const isEditing = Boolean(templateId);
-  const isCoachDraft = Boolean(proposalId) && !templateId;
+  const isCoachDraft = Boolean(jobId) && !templateId;
 
   const [templateName, setTemplateName] = useState('');
   const [exercises, setExercises] = useState<SessionExercise[]>([]);
@@ -68,30 +66,28 @@ export default function WorkoutTemplateEditorScreen() {
   const exerciseIds = exercises.map((exercise) => exercise.id);
   useScrollToDockedCard(scrollRef, { current: {} }, dockedExerciseId, exerciseIds);
 
-  const loadCoachProposal = useCallback(async () => {
-    if (!proposalId) {
-      return;
-    }
+  const loadCoachJob = useCallback(async () => {
+    if (!jobId) return;
 
     setLoading(true);
 
     try {
-      const proposal = await getCoachTemplateProposal(proposalId);
-      if (proposal.status !== 'completed' || !proposal.templateDraft) {
+      const job = await getCoachTemplateJob(jobId);
+      if (job.status !== 'completed' || !job.templateDraft) {
         throw new Error('Coach template draft is not ready yet.');
       }
 
-      setTemplateName(proposal.templateDraft.name);
-      setExercises(draftToSessionExercises(proposal.templateDraft));
-      setCoachWarnings(proposal.templateDraft.warnings ?? []);
+      setTemplateName(job.templateDraft.name);
+      setExercises(draftToSessionExercises(job.templateDraft));
+      setCoachWarnings(job.templateDraft.warnings ?? []);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Could not load coach draft.';
+      const message = getErrorMessage(error, 'Could not load coach draft.');
       Alert.alert('Could not load coach draft', message);
       router.back();
     } finally {
       setLoading(false);
     }
-  }, [proposalId, router]);
+  }, [jobId, router]);
 
   const loadTemplate = useCallback(async () => {
     if (!templateId) {
@@ -106,7 +102,7 @@ export default function WorkoutTemplateEditorScreen() {
       setExercises(template.exercises);
       setCoachWarnings([]);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Could not load template.';
+      const message = getErrorMessage(error, 'Could not load template.');
       Alert.alert('Could not load template', message);
       router.back();
     } finally {
@@ -120,19 +116,19 @@ export default function WorkoutTemplateEditorScreen() {
     }
 
     void bootstrap().catch((error) => {
-      const message = error instanceof Error ? error.message : 'Could not load exercises.';
+      const message = getErrorMessage(error, 'Could not load exercises.');
       Alert.alert('Could not load exercises', message);
     });
   }, []);
 
   useEffect(() => {
-    if (proposalId) {
-      void loadCoachProposal();
+    if (jobId) {
+      void loadCoachJob();
       return;
     }
 
     void loadTemplate();
-  }, [loadCoachProposal, loadTemplate, proposalId]);
+  }, [jobId, loadCoachJob, loadTemplate]);
 
   function handleSetsChange(exerciseId: string, sets: WorkoutSetLog[]) {
     setExercises((current) =>
@@ -181,15 +177,20 @@ export default function WorkoutTemplateEditorScreen() {
     setSaving(true);
 
     try {
-      await saveWorkoutTemplate(templateId ?? null, resolveWorkoutTitle(templateName), exercises);
+      const savedId = await saveWorkoutTemplate(
+        templateId ?? null,
+        resolveWorkoutTitle(templateName),
+        exercises,
+        { coachJobId: jobId ?? null },
+      );
 
-      if (proposalId) {
-        await acceptCoachTemplateProposal(proposalId);
+      if (jobId) {
+        await acceptCoachTemplateJob(jobId, savedId);
       }
 
       router.replace('/start-workout' as never);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Could not save template.';
+      const message = getErrorMessage(error, 'Could not save template.');
       Alert.alert('Could not save template', message);
     } finally {
       setSaving(false);
@@ -213,7 +214,7 @@ export default function WorkoutTemplateEditorScreen() {
             await deleteWorkoutTemplate(templateId);
             router.replace('/start-workout' as never);
           } catch (error) {
-            const message = error instanceof Error ? error.message : 'Could not delete template.';
+            const message = getErrorMessage(error, 'Could not delete template.');
             Alert.alert('Could not delete template', message);
           } finally {
             setDeleting(false);

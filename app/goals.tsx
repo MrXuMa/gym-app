@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react';
+import { getErrorMessage } from '@/lib/userFacingError';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -39,7 +40,7 @@ export default function GoalsScreen() {
       setSlots(slotsFromGoals(goals));
       setHasExistingGoals(goals.length > 0);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Could not load goals.';
+      const message = getErrorMessage(error, 'Could not load goals.');
       Alert.alert('Could not load goals', message);
     } finally {
       setLoading(false);
@@ -91,7 +92,7 @@ export default function GoalsScreen() {
       await saveProfileGoals(slots);
       router.back();
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Could not save goals.';
+      const message = getErrorMessage(error, 'Could not save goals.');
       Alert.alert('Could not save goals', message);
     } finally {
       setSaving(false);

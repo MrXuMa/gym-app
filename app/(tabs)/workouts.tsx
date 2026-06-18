@@ -6,6 +6,7 @@ import { useOpenSwipeable } from '@/hooks/useOpenSwipeable';
 import { WorkoutListRow } from '@/components/workouts/WorkoutListRow';
 import { deleteWorkout, fetchCompletedWorkouts, type WorkoutListItem } from '@/lib/workouts';
 import { homeTheme } from '@/constants/theme';
+import { getErrorMessage } from '@/lib/userFacingError';
 
 export default function WorkoutsTabScreen() {
   const router = useRouter();
@@ -20,7 +21,7 @@ export default function WorkoutsTabScreen() {
       const items = await fetchCompletedWorkouts();
       setWorkouts(items);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Could not load workouts.';
+      const message = getErrorMessage(error, 'Could not load workouts.');
       Alert.alert('Could not load workouts', message);
     } finally {
       setLoading(false);
@@ -53,7 +54,7 @@ export default function WorkoutsTabScreen() {
       await deleteWorkout(workoutId);
       setWorkouts((current) => current.filter((workout) => workout.id !== workoutId));
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Could not delete workout.';
+      const message = getErrorMessage(error, 'Could not delete workout.');
       Alert.alert('Delete failed', message);
     } finally {
       setDeletingId(null);

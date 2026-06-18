@@ -2,19 +2,17 @@ import { CoachAdviceCard } from '@/components/coach/CoachAdviceCard';
 import { CoachAdviceComposer } from '@/components/coach/CoachAdviceComposer';
 import { CoachSetupBanner } from '@/components/coach/CoachSetupBanner';
 import { AppScreen } from '@/components/layout/AppScreen';
-import { Button } from '@/components/ui/button';
 import { homeTheme } from '@/constants/theme';
 import { useCoach } from '@/hooks/useCoach';
-import { useCoachTemplateProposal } from '@/hooks/useCoachTemplateProposal';
 import {
   CoachNotConfiguredError,
   CoachServiceUnavailableError,
   CoachUnauthorizedError,
-  isValidCoachQuestion,
+  isValidCoachPrompt,
 } from '@/lib/coach';
-import { getCoachTemplateProposalForAdvice } from '@/lib/coachTemplate';
+import { getErrorMessage } from '@/lib/userFacingError';
 import { useRouter } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -28,154 +26,61 @@ import {
 
 export default function CoachScreen() {
   const router = useRouter();
-  const { request, loading, refreshing, submitting, clearingMemory, isConfigured, connectionError, refresh, requestAdvice, clearMemory } =
+  const { job, loading, refreshing, submitting, isConfigured, connectionError, refresh, requestWorkout } =
     useCoach();
-  const {
-    proposal: templateProposal,
-    generating: generatingTemplate,
-    error: templateError,
-    requestTemplate,
-    refreshForAdvice,
-    clearError: clearTemplateError,
-  } = useCoachTemplateProposal();
-  const [question, setQuestion] = useState('');
-  const [templateMode, setTemplateMode] = useState(false);
-  const autoTemplateAdviceRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    const completed = request;
-    if (!completed || completed.status !== 'completed') {
-      return;
-    }
-
-    let cancelled = false;
-
-    void (async () => {
-      await refreshForAdvice(completed.id);
-      if (cancelled || !completed.wantsTemplate) {
-        return;
-      }
-      if (autoTemplateAdviceRef.current === completed.id) {
-        return;
-      }
-
-      try {
-        const existing = await getCoachTemplateProposalForAdvice(completed.id);
-        if (cancelled) {
-          return;
-        }
-        autoTemplateAdviceRef.current = completed.id;
-        if (!existing) {
-          void requestTemplate(completed.id);
-        }
-      } catch {
-        // Auto-generation is best-effort; the manual "Create template" button stays available.
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [request?.id, request?.status, request?.wantsTemplate, refreshForAdvice, requestTemplate]);
-
-  const handleCreateTemplate = useCallback(() => {
-    if (!request || request.status !== 'completed') {
-      return;
-    }
-
-    clearTemplateError();
-    void requestTemplate(request.id);
-  }, [clearTemplateError, request, requestTemplate]);
+  const [prompt, setPrompt] = useState('');
 
   const handleReviewTemplate = useCallback(() => {
-    if (!templateProposal || templateProposal.status !== 'completed') {
-      return;
-    }
+    if (!job || job.status !== 'completed') return;
 
     router.push({
       pathname: '/workout-template/editor',
-      params: { proposalId: templateProposal.id },
+      params: { jobId: job.id },
     } as never);
-  }, [router, templateProposal]);
+  }, [router, job]);
 
   async function handleSubmit() {
-    if (!isValidCoachQuestion(question)) {
-      return;
-    }
+    if (!isValidCoachPrompt(prompt)) return;
 
     Keyboard.dismiss();
 
     if (!isConfigured) {
       Alert.alert(
         'Coach unavailable',
-        'Supabase is not configured in this build. Advice requests require a connected backend.',
+        'Supabase is not configured in this build. Workout generation requires a connected backend.',
       );
       return;
     }
 
     try {
-      const created = await requestAdvice(question, templateMode);
-      if (created) {
-        setQuestion('');
-      }
+      const created = await requestWorkout(prompt);
+      if (created) setPrompt('');
     } catch (error) {
       if (error instanceof CoachNotConfiguredError) {
         Alert.alert('Coach unavailable', error.message);
         return;
       }
-
       if (error instanceof CoachServiceUnavailableError) {
         Alert.alert('Coach unavailable', error.message);
         return;
       }
-
       if (error instanceof CoachUnauthorizedError) {
         Alert.alert('Sign in required', error.message);
         return;
       }
-
-      const message = error instanceof Error ? error.message : 'Could not request advice.';
-      Alert.alert('Could not request advice', message);
+      const message = getErrorMessage(error, 'Could not request workout.');
+      Alert.alert('Could not generate workout', message);
     }
   }
 
-  function handleClearMemoryPress() {
-    Alert.alert(
-      'Clear coach memory?',
-      'This removes all past advice summaries the coach uses for continuity. Your workouts and metrics are not deleted. Use this if earlier advice was wrong or unhelpful.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Clear memory',
-          style: 'destructive',
-          onPress: () => {
-            void (async () => {
-              try {
-                await clearMemory();
-                Alert.alert('Coach memory cleared', 'Past advice summaries were removed. New advice will start fresh.');
-              } catch (error) {
-                if (error instanceof CoachNotConfiguredError) {
-                  Alert.alert('Coach unavailable', error.message);
-                  return;
-                }
-
-                if (error instanceof CoachServiceUnavailableError) {
-                  Alert.alert('Could not clear memory', error.message);
-                  return;
-                }
-
-                if (error instanceof CoachUnauthorizedError) {
-                  Alert.alert('Sign in required', error.message);
-                  return;
-                }
-
-                Alert.alert('Could not clear memory', 'Something went wrong. Try again.');
-              }
-            })();
-          },
-        },
-      ],
-    );
+  async function handleRetry() {
+    if (!job) return;
+    try {
+      await requestWorkout(job.prompt);
+    } catch (error) {
+      const message = getErrorMessage(error, 'Could not retry workout generation.');
+      Alert.alert('Could not generate workout', message);
+    }
   }
 
   return (
@@ -195,52 +100,36 @@ export default function CoachScreen() {
         }
       >
         <Text style={styles.lead}>
-          Personalized training advice based on your workouts and metrics
+          Generate saveable workout templates from your split, goals, and training logs
         </Text>
 
         <CoachSetupBanner isConfigured={isConfigured} connectionError={connectionError} />
 
         <CoachAdviceComposer
-          question={question}
-          onChangeQuestion={setQuestion}
+          question={prompt}
+          onChangeQuestion={setPrompt}
           onSubmit={() => void handleSubmit()}
-          templateMode={templateMode}
-          onToggleTemplateMode={setTemplateMode}
           submitting={submitting}
+          disabled={!isConfigured}
         />
 
         <View style={styles.responseSection}>
-          <Text style={styles.sectionTitle}>Coach response</Text>
+          <Text style={styles.sectionTitle}>Workout status</Text>
 
           {loading ? (
             <ActivityIndicator style={styles.loader} color={homeTheme.colors.foreground} />
-          ) : !request ? (
+          ) : !job ? (
             <Text style={styles.emptyText}>
-              Ask a question above to get personalized advice based on your training.
+              Tap Generate workout above to build a template from your training context.
             </Text>
           ) : (
             <CoachAdviceCard
-              request={request}
-              templateProposalStatus={templateProposal?.adviceId === request.id ? templateProposal.status : null}
-              templateBusy={generatingTemplate}
-              onCreateTemplate={handleCreateTemplate}
+              job={job}
               onReviewTemplate={handleReviewTemplate}
+              onRetry={job.status === 'failed' ? () => void handleRetry() : undefined}
             />
           )}
-
-          {templateError ? <Text style={styles.templateError}>{templateError}</Text> : null}
         </View>
-
-        {isConfigured ? (
-          <Button
-            label="Clear coach memory"
-            variant="outline"
-            onPress={handleClearMemoryPress}
-            loading={clearingMemory}
-            disabled={submitting || loading}
-            fullWidth
-          />
-        ) : null}
       </ScrollView>
     </AppScreen>
   );
@@ -274,10 +163,5 @@ const styles = StyleSheet.create({
     color: homeTheme.colors.mutedForeground,
     fontSize: 14,
     lineHeight: 20,
-  },
-  templateError: {
-    color: homeTheme.colors.destructive,
-    fontSize: 13,
-    lineHeight: 18,
   },
 });

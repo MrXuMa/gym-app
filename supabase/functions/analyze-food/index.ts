@@ -6,7 +6,6 @@ const GEMINI_MODELS = (
 );
 const parsedDailyLimit = Number(Deno.env.get('FOOD_ANALYSIS_DAILY_LIMIT'));
 const MAX_REQUESTS_PER_DAY = Number.isFinite(parsedDailyLimit) ? Math.max(0, Math.floor(parsedDailyLimit)) : 20;
-const DISABLE_RATE_LIMIT = Deno.env.get('FOOD_ANALYSIS_DISABLE_RATE_LIMIT') === 'true';
 const EASTERN_TIME_ZONE = 'America/New_York';
 
 /** YYYY-MM-DD in Eastern time — matches nutrition_logs.log_date. */
@@ -32,8 +31,9 @@ Rules:
 - Return ONLY the JSON object, nothing else`;
 
 function corsHeaders() {
+  const origin = Deno.env.get('ALLOWED_ORIGIN')?.trim() || '*';
   return {
-    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Origin': origin,
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   };
 }
@@ -143,7 +143,8 @@ function parseGeminiFoodJson(rawText: string): ParsedFoodResult {
   }
 
   if (!parsedUnknown || typeof parsedUnknown !== 'object') {
-    throw new Error(`Gemini returned invalid JSON: ${trimmed.slice(0, 240)}`);
+    console.error('Gemini returned invalid JSON:', trimmed.slice(0, 500));
+    throw new Error('FOOD_ANALYSIS_PARSE_FAILED');
   }
 
   const parsed = parsedUnknown as Record<string, unknown>;
@@ -172,6 +173,10 @@ function parseGeminiFoodJson(rawText: string): ParsedFoodResult {
     carbs_g: toFiniteNumber(rawTotals.carbs_g),
     fat_g: toFiniteNumber(rawTotals.fat_g),
   };
+
+  if (items.length === 0) {
+    throw new Error('FOOD_ANALYSIS_PARSE_FAILED');
+  }
 
   return { items, totals };
 }
@@ -212,6 +217,22 @@ function collectCandidateText(geminiBody: any): string {
     .trim();
 }
 
+function userFacingAnalysisError(err: unknown): { message: string; code: string } {
+  const raw = err instanceof Error ? err.message : 'Unknown error';
+
+  if (raw === 'FOOD_ANALYSIS_PARSE_FAILED') {
+    return {
+      code: 'parse_failed',
+      message: 'We could not read the food in this photo. Try a clearer picture with good lighting.',
+    };
+  }
+
+  return {
+    code: 'analysis_failed',
+    message: 'Food analysis failed. Please try again in a moment.',
+  };
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders() });
@@ -243,44 +264,8 @@ Deno.serve(async (req: Request) => {
     const serviceClient = createClient(supabaseUrl, supabaseServiceKey);
     const today = dayKeyEastern();
 
-    // Drop prior-day rows so the table only holds today's quota accounting.
-    await serviceClient.from('food_analysis_requests').delete().lt('log_date', today);
-
-    // Rate limit: max N scan attempts per user per Eastern calendar day.
-    if (!DISABLE_RATE_LIMIT && MAX_REQUESTS_PER_DAY > 0) {
-      const { count } = await serviceClient
-        .from('food_analysis_requests')
-        .select('id', { count: 'exact', head: true })
-        .eq('user_id', user.id)
-        .eq('log_date', today);
-
-      if ((count ?? 0) >= MAX_REQUESTS_PER_DAY) {
-        return Response.json(
-          { error: `Daily limit of ${MAX_REQUESTS_PER_DAY} analyses reached. Try again tomorrow.` },
-          { status: 429, headers: corsHeaders() },
-        );
-      }
-    }
-
-    // Block if a job is already running
-    const { data: activeJobs } = await serviceClient
-      .from('food_analysis_requests')
-      .select('id, status')
-      .eq('user_id', user.id)
-      .eq('log_date', today)
-      .in('status', ['pending', 'running'])
-      .limit(1);
-
-    if (activeJobs && activeJobs.length > 0) {
-      return Response.json(
-        { error: 'An analysis is already in progress. Please wait.' },
-        { status: 429, headers: corsHeaders() },
-      );
-    }
-
     const body = await req.json();
 
-    // Accept base64 image data directly — avoids storage round-trip
     const imageData: string = body.image_data;
     const mimeType: string = body.mime_type ?? 'image/jpeg';
 
@@ -288,7 +273,6 @@ Deno.serve(async (req: Request) => {
       return Response.json({ error: 'image_data is required' }, { status: 400, headers: corsHeaders() });
     }
 
-    // Rough size check: base64 is ~4/3 of binary size
     const estimatedBytes = Math.ceil(imageData.length * 0.75);
     if (estimatedBytes > 4 * 1024 * 1024) {
       return Response.json(
@@ -299,23 +283,48 @@ Deno.serve(async (req: Request) => {
 
     console.log(`Received image: ~${Math.round(estimatedBytes / 1024)} KB, mimeType: ${mimeType}`);
 
-    // Create request row (today only — prior days are purged above)
-    const { data: requestRow, error: insertError } = await serviceClient
-      .from('food_analysis_requests')
-      .insert({
-        user_id: user.id,
-        log_date: today,
-        image_path: `inline/${user.id}/${Date.now()}`,
-        status: 'running',
-      })
-      .select('id')
-      .single();
+    const imagePath = `inline/${user.id}/${Date.now()}`;
+    const { data: requestId, error: reserveError } = await serviceClient.rpc(
+      'reserve_food_analysis_request',
+      {
+        p_user_id: user.id,
+        p_log_date: today,
+        p_daily_limit: MAX_REQUESTS_PER_DAY,
+        p_image_path: imagePath,
+      },
+    );
 
-    if (insertError || !requestRow) {
-      return Response.json({ error: 'Could not create analysis job' }, { status: 500, headers: corsHeaders() });
+    if (reserveError) {
+      const code = reserveError.message ?? '';
+      if (code.includes('daily_limit_reached')) {
+        return Response.json(
+          {
+            error: `Daily scan limit reached. You can scan up to ${MAX_REQUESTS_PER_DAY} meals per day.`,
+            code: 'limit_reached',
+            limit: MAX_REQUESTS_PER_DAY,
+          },
+          { status: 429, headers: corsHeaders() },
+        );
+      }
+      if (code.includes('scan_in_progress')) {
+        return Response.json(
+          {
+            error: 'A scan is already in progress. Please wait a moment and try again.',
+            code: 'in_progress',
+          },
+          { status: 429, headers: corsHeaders() },
+        );
+      }
+      console.error('reserve_food_analysis_request failed:', reserveError.message);
+      return Response.json(
+        { error: 'Food scan is temporarily unavailable. Please try again.', code: 'unavailable' },
+        { status: 503, headers: corsHeaders() },
+      );
     }
 
-    const requestId = requestRow.id;
+    if (!requestId) {
+      return Response.json({ error: 'Could not create analysis job' }, { status: 500, headers: corsHeaders() });
+    }
 
     try {
       // Call Gemini with model fallback (some keys/endpoints do not expose all model slugs).
@@ -370,9 +379,8 @@ Deno.serve(async (req: Request) => {
       }
 
       if (!parsed || !modelUsed) {
-        throw new Error(
-          `Gemini parse failed. ${parseErrors.join(' | ')}${modelErrors.length ? ` | model errors: ${modelErrors.join(' | ')}` : ''}`,
-        );
+        console.error('Gemini parse failed', { parseErrors, modelErrors });
+        throw new Error('FOOD_ANALYSIS_PARSE_FAILED');
       }
 
       const createdAt = new Date().toISOString();
@@ -395,16 +403,20 @@ Deno.serve(async (req: Request) => {
         { status: 200, headers: corsHeaders() },
       );
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown error';
+      const { message, code } = userFacingAnalysisError(err);
+      console.error('Food analysis failed:', err instanceof Error ? err.message : err);
       await serviceClient
         .from('food_analysis_requests')
-        .update({ status: 'failed', error: message })
+        .update({ status: 'failed', error: code })
         .eq('id', requestId);
 
-      return Response.json({ error: message }, { status: 500, headers: corsHeaders() });
+      return Response.json({ error: message, code }, { status: 500, headers: corsHeaders() });
     }
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Unexpected error';
-    return Response.json({ error: message }, { status: 500, headers: corsHeaders() });
+    console.error('Unexpected analyze-food error:', err);
+    return Response.json(
+      { error: 'Something went wrong. Please try again.', code: 'analysis_failed' },
+      { status: 500, headers: corsHeaders() },
+    );
   }
 });

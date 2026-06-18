@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchExerciseCatalog } from '@/lib/exercises';
 import { useScrollToDockedCard } from '@/hooks/useScrollToDockedCard';
+import { getErrorMessage } from '@/lib/userFacingError';
 import {
   ActivityIndicator,
   Alert,
@@ -87,7 +88,7 @@ export default function WorkoutSessionScreen() {
         setExercises(sessionResult.exercises);
         setAllExercises(catalog);
       } catch (error) {
-        const message = error instanceof Error ? error.message : 'Could not load workout session.';
+        const message = getErrorMessage(error, 'Could not load workout session.');
         Alert.alert('Session error', message);
       } finally {
         setLoading(false);
@@ -183,7 +184,7 @@ export default function WorkoutSessionScreen() {
       await cancelActiveWorkoutSession(workoutId);
       router.replace('/(tabs)/workouts');
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Could not discard session.';
+      const message = getErrorMessage(error, 'Could not discard session.');
       Alert.alert('Could not discard session', message);
     } finally {
       setDiscarding(false);
@@ -212,7 +213,7 @@ export default function WorkoutSessionScreen() {
       await endActiveWorkoutSession(workoutId, startedAt);
       router.replace('/(tabs)/workouts');
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Could not end workout.';
+      const message = getErrorMessage(error, 'Could not end workout.');
       Alert.alert('Could not end workout', message);
     } finally {
       setEnding(false);

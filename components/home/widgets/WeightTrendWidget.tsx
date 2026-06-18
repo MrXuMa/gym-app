@@ -3,74 +3,61 @@ import { getWidgetSizing, type WidgetSize } from '@/components/home/widgetSizing
 import { homeTheme } from '@/constants/theme';
 import { WEIGHT_UNIT_LABEL } from '@/constants/units';
 import { WidgetCard } from '@/components/home/WidgetCard';
+import { WeightSparkline } from '@/components/home/widgets/WeightSparkline';
+import { formatWeightChangeSinceLast } from '@/lib/weightWidgetHelpers';
 
 type WeightTrendWidgetProps = {
   size?: WidgetSize;
-  minimal?: boolean;
   currentWeight: number | null;
-  trendLabel: 'Gain' | 'Lose' | 'Maintain' | '—';
-  changeLbs?: number | null;
-  spanDays?: number | null;
+  changeSinceLastLbs?: number | null;
+  recentWeights?: number[];
 };
-
-const SPARKLINE_HEIGHTS = [17, 24, 20, 28, 23, 30, 26];
-
-type SparklinePlaceholderProps = {
-  width: number;
-  height: number;
-};
-
-function SparklinePlaceholder({ width, height }: SparklinePlaceholderProps) {
-  return (
-    <View style={[styles.sparkline, { width, height }]}>
-      {SPARKLINE_HEIGHTS.map((barHeight, index) => (
-        <View key={index} style={[styles.sparkBar, { height: barHeight }]} />
-      ))}
-    </View>
-  );
-}
-
-function formatChange(changeLbs: number | null | undefined): string | null {
-  if (changeLbs == null || !Number.isFinite(changeLbs) || Math.abs(changeLbs) < 0.05) {
-    return null;
-  }
-
-  const sign = changeLbs > 0 ? '+' : '−';
-  return `${sign}${Math.abs(changeLbs).toFixed(1)} ${WEIGHT_UNIT_LABEL}`;
-}
 
 export function WeightTrendWidget({
-  size = 'compact',
-  minimal = false,
+  size = 'small',
   currentWeight,
-  trendLabel,
-  changeLbs,
-  spanDays,
+  changeSinceLastLbs,
+  recentWeights = [],
 }: WeightTrendWidgetProps) {
-  const sizing = getWidgetSizing(size, minimal);
+  const sizing = getWidgetSizing(size);
   const weightDisplay = currentWeight != null ? `${currentWeight} ${WEIGHT_UNIT_LABEL}` : '—';
-  const changeText = formatChange(changeLbs);
-  const trendText = trendLabel === '—' ? 'No trend' : changeText ?? trendLabel;
+  const hasHistory = recentWeights.length > 0;
+  const changeText =
+    changeSinceLastLbs != null ? formatWeightChangeSinceLast(changeSinceLastLbs) : null;
+  const trendText =
+    currentWeight == null
+      ? 'No weight logged'
+      : changeText ?? (recentWeights.length === 1 ? 'First weigh-in' : 'Log again to compare');
   const subtext =
-    trendLabel === '—'
-      ? 'Log your weight in Profile to see a trend.'
-      : changeText && spanDays
-        ? `${trendLabel} • ${changeText} over ${spanDays}d`
-        : `Trend: ${trendLabel}`;
+    currentWeight == null
+      ? 'Log your weight in Profile to track changes.'
+      : changeSinceLastLbs != null
+        ? 'Compared to your previous weigh-in'
+        : 'Add another weigh-in to see change since last';
 
   return (
-    <WidgetCard title="Body weight" size={size} minimal={minimal}>
+    <WidgetCard title="Body weight" size={size}>
       <View style={styles.row}>
         <View style={styles.valueBlock}>
           <Text style={[styles.value, { fontSize: sizing.valueFontSize }]} numberOfLines={1}>
             {weightDisplay}
           </Text>
-          <Text style={[styles.trend, minimal && styles.trendMinimal]} numberOfLines={1}>
+          <Text
+            style={[
+              styles.secondary,
+              { fontSize: sizing.secondaryFontSize, lineHeight: sizing.secondaryLineHeight },
+            ]}
+            numberOfLines={2}
+          >
             {trendText}
           </Text>
         </View>
-        {sizing.showSparkline ? (
-          <SparklinePlaceholder width={sizing.sparklineWidth} height={sizing.sparklineHeight} />
+        {hasHistory ? (
+          <WeightSparkline
+            weights={recentWeights}
+            width={sizing.sparklineWidth}
+            height={sizing.sparklineHeight}
+          />
         ) : null}
       </View>
       {sizing.showSubtext ? (
@@ -88,44 +75,25 @@ export function WeightTrendWidget({
 const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-end',
     justifyContent: 'space-between',
     gap: 8,
+    flex: 1,
   },
   valueBlock: {
     flex: 1,
     gap: 2,
+    minWidth: 0,
   },
   value: {
     color: homeTheme.colors.foreground,
     fontWeight: '700',
     letterSpacing: -0.3,
   },
-  trend: {
-    color: homeTheme.colors.primary,
-    fontSize: 13,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-  },
-  trendMinimal: {
-    fontSize: 11,
+  secondary: {
+    color: homeTheme.colors.mutedForeground,
     fontWeight: '500',
-    textTransform: 'none',
-    letterSpacing: 0,
-  },
-  sparkline: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
-    gap: 3,
-    opacity: 0.45,
-  },
-  sparkBar: {
-    flex: 1,
-    backgroundColor: homeTheme.colors.foreground,
-    borderRadius: 2,
-    minHeight: 4,
+    fontVariant: ['tabular-nums'],
   },
   subtext: {
     color: homeTheme.colors.mutedForeground,

@@ -12,61 +12,86 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { AppScreen } from '@/components/layout/AppScreen';
+import { FoodScanErrorScreen } from '@/components/food/FoodScanErrorScreen';
+import { MacroSummary } from '@/components/food/MacroSummary';
+import { MealPicker } from '@/components/food/MealPicker';
 import { homeTheme } from '@/constants/theme';
 import {
   pickFoodImage,
   prepareImageForAnalysis,
   analyzeFood,
   saveNutritionLog,
+  inferMealFromTime,
+  isFoodAnalysisError,
+  FOOD_SCAN_DAILY_LIMIT,
+  MEAL_LABELS,
   type FoodItem,
-  type FoodAnalysisResult,
+  type FoodAnalysisErrorCode,
+  type MealType,
 } from '@/lib/foodAnalysis';
 
-type Step = 'idle' | 'picking' | 'analyzing' | 'review' | 'saving' | 'done';
+type Step = 'idle' | 'picking' | 'analyzing' | 'review' | 'saving' | 'done' | 'error';
 
 const ACCENT = homeTheme.colors.primary;
 const CARD = homeTheme.colors.card;
-
-// Macro colour coding
-const MACRO_COLORS = {
-  protein: '#60a5fa',
-  carbs: homeTheme.colors.primary,
-  fat: homeTheme.colors.destructive,
-};
 
 export default function FoodScanScreen() {
   const router = useRouter();
   const [step, setStep] = useState<Step>('idle');
   const [previewUri, setPreviewUri] = useState<string | null>(null);
-  const [result, setResult] = useState<FoodAnalysisResult | null>(null);
   const [items, setItems] = useState<FoodItem[]>([]);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [meal, setMeal] = useState<MealType>(inferMealFromTime());
+  const [errorCode, setErrorCode] = useState<FoodAnalysisErrorCode>('analysis_failed');
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [lastScanSource, setLastScanSource] = useState<'camera' | 'library' | null>(null);
+  const [atDailyLimit, setAtDailyLimit] = useState(false);
+
+  function setAnalysisError(err: unknown) {
+    if (isFoodAnalysisError(err)) {
+      setErrorCode(err.code);
+      setErrorMessage(err.message);
+      if (err.code === 'limit_reached') {
+        setAtDailyLimit(true);
+      }
+    } else {
+      setErrorCode('analysis_failed');
+      setErrorMessage('We could not analyze this photo. Please try again.');
+    }
+    setStep('error');
+  }
 
   async function startScan(source: 'camera' | 'library') {
-    setErrorMsg(null);
-    setResult(null);
+    if (atDailyLimit) {
+      setErrorCode('limit_reached');
+      setErrorMessage(
+        `Limit reached. You can scan up to ${FOOD_SCAN_DAILY_LIMIT} meals per day. Try again tomorrow.`,
+      );
+      setStep('error');
+      return;
+    }
+
+    setErrorMessage(null);
     setItems([]);
     setPreviewUri(null);
+    setMeal(inferMealFromTime());
+    setLastScanSource(source);
 
     try {
       setStep('picking');
       const uri = await pickFoodImage(source);
       if (!uri) { setStep('idle'); return; }
 
-      // Resize/compress first, and get a base64 payload for analysis
       const prepared = await prepareImageForAnalysis(uri);
       setPreviewUri(prepared.uri);
 
       setStep('analyzing');
       const res = await analyzeFood(prepared.base64);
-      setResult(res);
       setItems(res.items.map(i => ({ ...i })));
       setStep('review');
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Something went wrong';
       if (msg === 'cancelled') { setStep('idle'); return; }
-      setErrorMsg(msg);
-      setStep('idle');
+      setAnalysisError(err);
     }
   }
 
@@ -90,7 +115,7 @@ export default function FoodScanScreen() {
     setStep('saving');
     try {
       const t = totals();
-      await saveNutritionLog(items, t, 'photo');
+      await saveNutritionLog(items, t, 'photo', meal);
       setStep('done');
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Could not save';
@@ -102,120 +127,121 @@ export default function FoodScanScreen() {
   function resetAll() {
     setStep('idle');
     setPreviewUri(null);
-    setResult(null);
     setItems([]);
-    setErrorMsg(null);
+    setMeal(inferMealFromTime());
+    setErrorMessage(null);
+    setLastScanSource(null);
+  }
+
+  function handleErrorRetry() {
+    if (lastScanSource) {
+      void startScan(lastScanSource);
+      return;
+    }
+    resetAll();
   }
 
   const t = totals();
   const isLoading = ['picking', 'analyzing', 'saving'].includes(step);
-  const totalMacroG = t.protein_g + t.carbs_g + t.fat_g || 1;
+  const scanDisabled = atDailyLimit;
 
-  // ── Done screen ──────────────────────────────────────────────────────────
   if (step === 'done') {
     return (
       <AppScreen>
         <View style={styles.centered}>
           <Ionicons name="checkmark-circle" size={72} color={ACCENT} />
-          <Text style={styles.doneTitle}>Logged!</Text>
+          <Text style={styles.doneTitle}>Added to {MEAL_LABELS[meal]}!</Text>
           <Text style={styles.doneKcal}>{Math.round(t.kcal)} kcal</Text>
-          <View style={styles.doneMacroRow}>
-            <MacroPill label="Protein" value={`${t.protein_g.toFixed(1)}g`} color={MACRO_COLORS.protein} />
-            <MacroPill label="Carbs"   value={`${t.carbs_g.toFixed(1)}g`}   color={MACRO_COLORS.carbs} />
-            <MacroPill label="Fat"     value={`${t.fat_g.toFixed(1)}g`}     color={MACRO_COLORS.fat} />
+          <MacroSummary totals={t} showKcal={false} />
+          <View style={styles.doneActions}>
+            <Pressable style={styles.donePrimaryBtn} onPress={resetAll}>
+              <Text style={styles.primaryBtnText}>Log Another</Text>
+            </Pressable>
+            <Pressable style={styles.doneSecondaryBtn} onPress={() => router.push('/(tabs)/log')}>
+              <Text style={styles.secondaryBtnText}>View Log</Text>
+            </Pressable>
           </View>
-          <Pressable style={styles.donePrimaryBtn} onPress={resetAll}>
-            <Text style={styles.primaryBtnText}>Log Another</Text>
-          </Pressable>
         </View>
       </AppScreen>
     );
   }
 
-  // ── Main screen ──────────────────────────────────────────────────────────
+  if (step === 'error' && errorMessage) {
+    return (
+      <AppScreen>
+        <FoodScanErrorScreen
+          code={errorCode}
+          message={errorMessage}
+          onRetry={handleErrorRetry}
+          onDismiss={resetAll}
+        />
+      </AppScreen>
+    );
+  }
+
   return (
     <AppScreen>
       <ScrollView style={styles.scroll} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-
-        {/* Header */}
         <View style={styles.header}>
           <Text style={styles.title}>Food Scanner</Text>
           <Text style={styles.subtitle}>Snap a photo for instant macros</Text>
-          <Pressable style={styles.dailyLogBtn} onPress={() => router.push('/food-daily-log')}>
-            <Ionicons name="calendar-outline" size={16} color={ACCENT} />
-            <Text style={styles.dailyLogBtnText}>View Daily Log</Text>
-          </Pressable>
         </View>
 
-        {/* Error banner */}
-        {errorMsg && (
-          <View style={styles.errorBanner}>
-            <Ionicons name="warning-outline" size={16} color={homeTheme.colors.destructive} />
-            <Text style={styles.errorText}>{errorMsg}</Text>
-          </View>
-        )}
-
-        {/* Loading card */}
         {isLoading && (
           <View style={styles.loadingCard}>
             <ActivityIndicator size="large" color={ACCENT} />
             <Text style={styles.loadingText}>
               {step === 'picking'   ? 'Opening picker…'
-               : step === 'analyzing' ? 'Analyzing with Gemini…'
+               : step === 'analyzing' ? 'Analyzing food…'
                : 'Saving…'}
             </Text>
           </View>
         )}
 
-        {/* Pick source buttons */}
         {step === 'idle' && (
-          <View style={styles.sourceRow}>
-            <Pressable style={styles.sourceBtn} onPress={() => startScan('camera')}>
-              <Ionicons name="camera" size={32} color={ACCENT} />
-              <Text style={styles.sourceBtnText}>Take Photo</Text>
+          <>
+            {atDailyLimit && (
+              <View style={styles.limitBanner}>
+                <Ionicons name="ban-outline" size={18} color={homeTheme.colors.destructive} />
+                <Text style={styles.limitBannerText}>
+                  Limit reached. You've used all {FOOD_SCAN_DAILY_LIMIT} scans for today.
+                </Text>
+              </View>
+            )}
+            <View style={styles.sourceRow}>
+            <Pressable
+              style={[styles.sourceBtn, scanDisabled && styles.sourceBtnDisabled]}
+              onPress={() => startScan('camera')}
+              disabled={scanDisabled}
+            >
+              <Ionicons name="camera" size={32} color={scanDisabled ? homeTheme.colors.textMuted : ACCENT} />
+              <Text style={[styles.sourceBtnText, scanDisabled && styles.sourceBtnTextDisabled]}>Take Photo</Text>
             </Pressable>
-            <Pressable style={styles.sourceBtn} onPress={() => startScan('library')}>
-              <Ionicons name="images" size={32} color={ACCENT} />
-              <Text style={styles.sourceBtnText}>Choose Photo</Text>
+            <Pressable
+              style={[styles.sourceBtn, scanDisabled && styles.sourceBtnDisabled]}
+              onPress={() => startScan('library')}
+              disabled={scanDisabled}
+            >
+              <Ionicons name="images" size={32} color={scanDisabled ? homeTheme.colors.textMuted : ACCENT} />
+              <Text style={[styles.sourceBtnText, scanDisabled && styles.sourceBtnTextDisabled]}>Choose Photo</Text>
             </Pressable>
           </View>
+          </>
         )}
 
-        {/* ── Review display ── */}
         {step === 'review' && (
           <>
-            {/* Image thumbnail */}
             {previewUri && (
               <Image source={{ uri: previewUri }} style={styles.preview} resizeMode="cover" />
             )}
 
-            {/* Big calorie display */}
-            <View style={styles.kcalCard}>
-              <Text style={styles.kcalNumber}>{Math.round(t.kcal)}</Text>
-              <Text style={styles.kcalLabel}>calories</Text>
+            <View style={styles.macroCard}>
+              <MacroSummary totals={t} />
             </View>
 
-            {/* Macro bar */}
-            <View style={styles.macroBarContainer}>
-              {t.protein_g > 0 && (
-                <View style={[styles.macroBarSegment, { flex: t.protein_g / totalMacroG, backgroundColor: MACRO_COLORS.protein }]} />
-              )}
-              {t.carbs_g > 0 && (
-                <View style={[styles.macroBarSegment, { flex: t.carbs_g / totalMacroG, backgroundColor: MACRO_COLORS.carbs }]} />
-              )}
-              {t.fat_g > 0 && (
-                <View style={[styles.macroBarSegment, { flex: t.fat_g / totalMacroG, backgroundColor: MACRO_COLORS.fat }]} />
-              )}
-            </View>
+            <Text style={styles.sectionLabel}>Add to</Text>
+            <MealPicker value={meal} onChange={setMeal} />
 
-            {/* Macro pills */}
-            <View style={styles.macroPillRow}>
-              <MacroPill label="Protein" value={`${t.protein_g.toFixed(1)}g`} color={MACRO_COLORS.protein} />
-              <MacroPill label="Carbs"   value={`${t.carbs_g.toFixed(1)}g`}   color={MACRO_COLORS.carbs} />
-              <MacroPill label="Fat"     value={`${t.fat_g.toFixed(1)}g`}     color={MACRO_COLORS.fat} />
-            </View>
-
-            {/* Food item list */}
             <Text style={styles.sectionLabel}>Detected Items</Text>
             {items.map((item, idx) => (
               <View key={idx} style={styles.foodRow}>
@@ -225,66 +251,27 @@ export default function FoodScanScreen() {
               </View>
             ))}
 
-            {/* Actions */}
             <View style={styles.actionRow}>
               <Pressable style={styles.secondaryBtn} onPress={resetAll}>
                 <Text style={styles.secondaryBtnText}>Retake</Text>
               </Pressable>
               <Pressable style={styles.primaryBtn} onPress={confirmLog}>
-                <Text style={styles.primaryBtnText}>Log This Meal</Text>
+                <Text style={styles.primaryBtnText}>Add to {MEAL_LABELS[meal]}</Text>
               </Pressable>
             </View>
           </>
         )}
-
       </ScrollView>
     </AppScreen>
   );
 }
 
-// ── MacroPill component ───────────────────────────────────────────────────────
-function MacroPill({ label, value, color }: { label: string; value: string; color: string }) {
-  return (
-    <View style={[styles.pill, { borderColor: color }]}>
-      <Text style={[styles.pillValue, { color }]}>{value}</Text>
-      <Text style={styles.pillLabel}>{label}</Text>
-    </View>
-  );
-}
-
-// ── Styles ────────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   scroll: { flex: 1 },
   content: { padding: 20, paddingBottom: 48 },
-
   header: { alignItems: 'center', marginBottom: 24, marginTop: 8 },
   title:    { color: homeTheme.colors.textPrimary, fontSize: 28, fontWeight: '800', textAlign: 'center' },
   subtitle: { color: homeTheme.colors.textMuted, fontSize: 14, textAlign: 'center', marginTop: 4 },
-  dailyLogBtn: {
-    marginTop: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    borderWidth: 1,
-    borderColor: homeTheme.colors.border,
-    borderRadius: 999,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    backgroundColor: CARD,
-  },
-  dailyLogBtnText: { color: homeTheme.colors.primary, fontSize: 13, fontWeight: '700' },
-
-  errorBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: homeTheme.colors.card,
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 16,
-  },
-  errorText: { color: homeTheme.colors.destructive, flex: 1, fontSize: 14 },
-
   loadingCard: {
     alignItems: 'center',
     gap: 14,
@@ -294,7 +281,18 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   loadingText: { color: homeTheme.colors.textMuted, fontSize: 15 },
-
+  limitBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: homeTheme.colors.card,
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: homeTheme.colors.destructive,
+  },
+  limitBannerText: { color: homeTheme.colors.textPrimary, flex: 1, fontSize: 14, lineHeight: 20 },
   sourceRow: { flexDirection: 'row', gap: 16, marginTop: 16 },
   sourceBtn: {
     flex: 1,
@@ -306,64 +304,22 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: homeTheme.colors.border,
   },
+  sourceBtnDisabled: { opacity: 0.45 },
   sourceBtnText: { color: homeTheme.colors.textPrimary, fontSize: 15, fontWeight: '600' },
-
+  sourceBtnTextDisabled: { color: homeTheme.colors.textMuted },
   preview: {
     width: '100%',
     height: 200,
     borderRadius: 16,
     marginBottom: 20,
   },
-
-  // Calorie display
-  kcalCard: {
-    alignItems: 'center',
-    marginBottom: 16,
+  macroCard: {
+    width: '100%',
+    backgroundColor: CARD,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 8,
   },
-  kcalNumber: {
-    color: homeTheme.colors.textPrimary,
-    fontSize: 72,
-    fontWeight: '900',
-    lineHeight: 76,
-  },
-  kcalLabel: {
-    color: homeTheme.colors.textMuted,
-    fontSize: 16,
-    fontWeight: '600',
-    letterSpacing: 2,
-    textTransform: 'uppercase',
-  },
-
-  // Macro bar
-  macroBarContainer: {
-    flexDirection: 'row',
-    height: 8,
-    borderRadius: 4,
-    overflow: 'hidden',
-    marginBottom: 14,
-    gap: 2,
-  },
-  macroBarSegment: { borderRadius: 4 },
-
-  // Macro pills
-  macroPillRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginBottom: 24,
-  },
-  pill: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: 12,
-    borderRadius: 14,
-    borderWidth: 1.5,
-    backgroundColor: homeTheme.colors.muted,
-    gap: 2,
-  },
-  pillValue: { fontSize: 18, fontWeight: '800' },
-  pillLabel: { color: homeTheme.colors.textMuted, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5 },
-
-  // Food item list
   sectionLabel: {
     color: homeTheme.colors.textMuted,
     fontSize: 12,
@@ -371,6 +327,7 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 1,
     marginBottom: 8,
+    marginTop: 8,
   },
   foodRow: {
     flexDirection: 'row',
@@ -388,8 +345,6 @@ const styles = StyleSheet.create({
   },
   foodName: { flex: 1, color: homeTheme.colors.textPrimary, fontSize: 15 },
   foodKcal: { color: homeTheme.colors.textMuted, fontSize: 14, fontWeight: '600' },
-
-  // Actions
   actionRow: { flexDirection: 'row', gap: 12, marginTop: 24 },
   primaryBtn: {
     flex: 2,
@@ -407,15 +362,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   secondaryBtnText: { color: homeTheme.colors.secondaryForeground, fontSize: 16, fontWeight: '600' },
-
-  // Done screen
-  centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, padding: 32 },
-  doneTitle: { color: homeTheme.colors.textPrimary, fontSize: 32, fontWeight: '900' },
+  centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, padding: 32, width: '100%' },
+  doneTitle: { color: homeTheme.colors.textPrimary, fontSize: 28, fontWeight: '900', textAlign: 'center' },
   doneKcal:  { color: ACCENT, fontSize: 48, fontWeight: '900' },
-  doneMacroRow: { flexDirection: 'row', gap: 10, marginTop: 4, marginBottom: 16 },
+  doneActions: { width: '100%', gap: 10, marginTop: 16 },
   donePrimaryBtn: {
-    width: 220,
+    width: '100%',
     backgroundColor: homeTheme.colors.primary,
+    borderRadius: 14,
+    paddingVertical: 16,
+    alignItems: 'center',
+  },
+  doneSecondaryBtn: {
+    width: '100%',
+    backgroundColor: homeTheme.colors.secondary,
     borderRadius: 14,
     paddingVertical: 16,
     alignItems: 'center',

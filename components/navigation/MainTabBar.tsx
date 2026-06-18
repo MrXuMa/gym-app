@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { getActiveWorkoutSession } from '@/lib/workoutSession';
 import { homeTheme } from '@/constants/theme';
+import { getErrorMessage } from '@/lib/userFacingError';
 
 type TabItem = {
   routeName: string;
@@ -19,7 +20,7 @@ const LEFT_TABS: TabItem[] = [
 ];
 
 const RIGHT_TABS: TabItem[] = [
-  { routeName: 'friends', label: 'Friends', icon: 'people-outline' },
+  { routeName: 'log', label: 'Log', icon: 'journal-outline' },
   { routeName: 'food-scan', label: 'Food', icon: 'camera-outline' },
 ];
 
@@ -46,7 +47,7 @@ export function MainTabBar({ state, navigation }: BottomTabBarProps) {
 
       router.push('/start-workout' as never);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Could not start workout.';
+      const message = getErrorMessage(error, 'Could not start workout.');
       Alert.alert('Could not start workout', message);
     } finally {
       setStarting(false);

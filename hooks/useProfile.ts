@@ -8,9 +8,10 @@ type Profile = {
   last_name: string;
   email: string;
   age: number | null;
-  weight: number;
-  height: number;
+  weight: number | null;
+  height: number | null;
   goals: string[];
+  lifting_level: string | null;
 };
 
 export function useProfile() {
@@ -26,7 +27,7 @@ export function useProfile() {
 
     const { data } = await supabase
       .from('profiles_with_age')
-      .select('username, first_name, last_name, email, age, weight, height, goals')
+      .select('username, first_name, last_name, email, age, weight, height, goals, lifting_level')
       .eq('id', userResult.user.id)
       .maybeSingle();
 

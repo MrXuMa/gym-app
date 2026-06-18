@@ -11,18 +11,19 @@ const STORAGE_KEY = '@gym-app/widget-settings/v1';
 
 /** Stable widget identifiers. Adding a new widget? Add it here AND in widgetRegistry. */
 export const WIDGET_IDS = [
-  'streak',
   'predicted-max',
   'weight-trend',
   'week-summary',
-  'body-weight-graph',
+  'daily-calories',
+  'today-split',
+  'task-bulletin',
+  'week-meals',
 ] as const;
 
 export type WidgetId = (typeof WIDGET_IDS)[number];
 
 /** Widgets shown by default on a brand-new install (order = render order). */
 export const DEFAULT_ENABLED_WIDGET_IDS: WidgetId[] = [
-  'streak',
   'predicted-max',
   'weight-trend',
   'week-summary',

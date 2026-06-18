@@ -1,12 +1,14 @@
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { supabase } from './supabase';
+import { throwIfSupabaseError } from './supabaseError';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface FoodItem {
   name: string;
   estimated_portion_g?: number;
+  fdc_id?: number;
   kcal: number;
   protein_g: number;
   carbs_g: number;
@@ -44,9 +46,21 @@ export interface NutritionLog {
   entries?: NutritionEntry[];
 }
 
+export type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snacks';
+
+export const MEAL_ORDER: MealType[] = ['breakfast', 'lunch', 'dinner', 'snacks'];
+
+export const MEAL_LABELS: Record<MealType, string> = {
+  breakfast: 'Breakfast',
+  lunch: 'Lunch',
+  dinner: 'Dinner',
+  snacks: 'Snacks',
+};
+
 export interface NutritionEntry {
   logged_at: string;
   source: 'photo' | 'manual';
+  meal?: MealType;
   items: FoodItem[];
   totals: FoodTotals;
 }
@@ -69,6 +83,113 @@ const NETWORK_TIMEOUT_MS = 15000;
 // (image upload + Gemini inference, plus a possible token-budget retry), so it
 // gets its own, more generous budget.
 const ANALYSIS_TIMEOUT_MS = 60000;
+
+/** Max Gemini food scans per user per Eastern calendar day (matches edge function). */
+export const FOOD_SCAN_DAILY_LIMIT = 20;
+
+export type FoodAnalysisErrorCode =
+  | 'limit_reached'
+  | 'analysis_failed'
+  | 'parse_failed'
+  | 'in_progress'
+  | 'unauthorized'
+  | 'timeout'
+  | 'invalid_response'
+  | 'unknown';
+
+export class FoodAnalysisError extends Error {
+  readonly code: FoodAnalysisErrorCode;
+
+  constructor(code: FoodAnalysisErrorCode, message: string) {
+    super(message);
+    this.name = 'FoodAnalysisError';
+    this.code = code;
+  }
+}
+
+export function isFoodAnalysisError(err: unknown): err is FoodAnalysisError {
+  return err instanceof FoodAnalysisError;
+}
+
+type AnalysisErrorBody = {
+  error?: string;
+  code?: string;
+  limit?: number;
+};
+
+function looksTechnical(message: string): boolean {
+  const trimmed = message.trim();
+  if (!trimmed) return true;
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) return true;
+  if (/gemini|invalid json|parse failed|model errors|HTTP \d{3}/i.test(trimmed)) return true;
+  return false;
+}
+
+function mapAnalysisError(status: number, body: AnalysisErrorBody): FoodAnalysisError {
+  const code = (body.code ?? '') as FoodAnalysisErrorCode;
+  const limit = body.limit ?? FOOD_SCAN_DAILY_LIMIT;
+
+  if (status === 429 && (code === 'limit_reached' || code === 'in_progress')) {
+    if (code === 'in_progress') {
+      return new FoodAnalysisError(
+        'in_progress',
+        'A scan is already in progress. Please wait a moment and try again.',
+      );
+    }
+    return new FoodAnalysisError(
+      'limit_reached',
+      `Limit reached. You can scan up to ${limit} meals per day. Try again tomorrow.`,
+    );
+  }
+
+  if (code === 'parse_failed') {
+    return new FoodAnalysisError(
+      'parse_failed',
+      body.error && !looksTechnical(body.error)
+        ? body.error
+        : 'We could not read the food in this photo. Try a clearer picture with good lighting.',
+    );
+  }
+
+  if (status === 401) {
+    return new FoodAnalysisError('unauthorized', 'Please sign in to scan food.');
+  }
+
+  if (status === 429) {
+    return new FoodAnalysisError(
+      'limit_reached',
+      `Limit reached. You can scan up to ${limit} meals per day. Try again tomorrow.`,
+    );
+  }
+
+  if (body.error && !looksTechnical(body.error)) {
+    return new FoodAnalysisError(
+      code === 'analysis_failed' || code === 'parse_failed' ? code : 'analysis_failed',
+      body.error,
+    );
+  }
+
+  return new FoodAnalysisError(
+    'analysis_failed',
+    'We could not analyze this photo. Please try again with a clearer picture.',
+  );
+}
+
+function validateAnalysisResult(json: unknown): FoodAnalysisResult {
+  if (!json || typeof json !== 'object') {
+    throw new FoodAnalysisError('invalid_response', 'We could not analyze this photo. Please try again.');
+  }
+
+  const payload = json as Partial<FoodAnalysisResult>;
+  if (!Array.isArray(payload.items) || payload.items.length === 0) {
+    throw new FoodAnalysisError(
+      'parse_failed',
+      'We could not identify any food in this photo. Try a different angle or better lighting.',
+    );
+  }
+
+  return payload as FoodAnalysisResult;
+}
 
 async function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = NETWORK_TIMEOUT_MS): Promise<T> {
   return await Promise.race([
@@ -126,6 +247,160 @@ function sumEntries(entries: NutritionEntry[]): FoodTotals {
   );
 }
 
+export function totalsFromItems(items: FoodItem[]): FoodTotals {
+  return items.reduce(
+    (acc, item) => ({
+      kcal: acc.kcal + (item.kcal || 0),
+      protein_g: acc.protein_g + (item.protein_g || 0),
+      carbs_g: acc.carbs_g + (item.carbs_g || 0),
+      fat_g: acc.fat_g + (item.fat_g || 0),
+    }),
+    { kcal: 0, protein_g: 0, carbs_g: 0, fat_g: 0 },
+  );
+}
+
+/** Infer meal bucket from Eastern local hour when not explicitly set. */
+export function inferMealFromTime(isoOrDate: string | Date = new Date()): MealType {
+  const date = typeof isoOrDate === 'string' ? new Date(isoOrDate) : isoOrDate;
+  let hour = Number(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: EASTERN_TIME_ZONE,
+      hour: 'numeric',
+      hour12: false,
+    }).format(date),
+  );
+  if (hour === 24) hour = 0;
+  if (hour < 11) return 'breakfast';
+  if (hour < 16) return 'lunch';
+  if (hour < 21) return 'dinner';
+  return 'snacks';
+}
+
+export function entryMeal(entry: NutritionEntry): MealType {
+  return entry.meal ?? inferMealFromTime(entry.logged_at);
+}
+
+function addDaysToDateKey(dateKey: string, days: number): string {
+  const d = new Date(`${dateKey}T12:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Monday (YYYY-MM-DD) of the calendar week containing `dateKey`. */
+export function mondayOfWeekContaining(dateKey: string): string {
+  const d = new Date(`${dateKey}T12:00:00.000Z`);
+  const dow = d.getUTCDay();
+  const daysFromMonday = dow === 0 ? 6 : dow - 1;
+  return addDaysToDateKey(dateKey, -daysFromMonday);
+}
+
+/** Seven date keys Mon–Sun starting at `mondayKey`. */
+export function weekDateKeysFromMonday(mondayKey: string): string[] {
+  return Array.from({ length: 7 }, (_, i) => addDaysToDateKey(mondayKey, i));
+}
+
+export function shiftWeek(mondayKey: string, weeks: number): string {
+  return addDaysToDateKey(mondayKey, weeks * 7);
+}
+
+export type WeekNutritionSummary = {
+  weekStart: string;
+  days: Array<{ dateKey: string; log: DailyNutritionLog | null }>;
+  totals: FoodTotals;
+  averageKcal: number;
+  daysWithData: number;
+};
+
+function mapDailyRow(data: {
+  id: string;
+  user_id: string;
+  log_date: string;
+  entries: unknown;
+  kcal: number | null;
+  protein_g: number | null;
+  carbs_g: number | null;
+  fat_g: number | null;
+  created_at: string;
+  logged_at: string;
+}): DailyNutritionLog {
+  return {
+    id: data.id,
+    user_id: data.user_id,
+    log_date: data.log_date,
+    entries: Array.isArray(data.entries) ? (data.entries as NutritionEntry[]) : [],
+    kcal: Number(data.kcal ?? 0),
+    protein_g: Number(data.protein_g ?? 0),
+    carbs_g: Number(data.carbs_g ?? 0),
+    fat_g: Number(data.fat_g ?? 0),
+    created_at: data.created_at,
+    logged_at: data.logged_at,
+  };
+}
+
+async function loadDailyLogForUser(userId: string, logDate: string) {
+  return await withTimeout(
+    supabase
+      .from('nutrition_logs')
+      .select('id, entries, log_date')
+      .eq('user_id', userId)
+      .eq('log_date', logDate)
+      .maybeSingle(),
+    'Loading daily nutrition log',
+  );
+}
+
+async function persistDailyLog(userId: string, logDate: string, entries: NutritionEntry[]): Promise<void> {
+  const dailyTotals = sumEntries(entries);
+  const latestLoggedAt = entries[entries.length - 1]?.logged_at ?? new Date().toISOString();
+  const flatItems = entries.flatMap((entry) => entry.items);
+  const hasManual = entries.some((e) => e.source === 'manual');
+  const rowSource = hasManual ? 'manual' : 'photo';
+
+  const { data: existing, error: loadError } = await loadDailyLogForUser(userId, logDate);
+  if (loadError) throwIfSupabaseError(loadError, 'Could not save nutrition log.');
+
+  if (entries.length === 0) {
+    if (existing?.id) {
+      const { error } = await withTimeout(
+        supabase.from('nutrition_logs').delete().eq('id', existing.id),
+        'Saving meal',
+      );
+      if (error) throwIfSupabaseError(error, 'Could not save nutrition log.');
+    }
+    return;
+  }
+
+  const payload = {
+    entries,
+    items: flatItems,
+    kcal: Math.round(dailyTotals.kcal),
+    protein_g: dailyTotals.protein_g,
+    carbs_g: dailyTotals.carbs_g,
+    fat_g: dailyTotals.fat_g,
+    source: rowSource,
+    logged_at: latestLoggedAt,
+  };
+
+  if (existing?.id) {
+    const { error } = await withTimeout(
+      supabase.from('nutrition_logs').update(payload).eq('id', existing.id),
+      'Saving meal',
+    );
+    if (error) throwIfSupabaseError(error, 'Could not save nutrition log.');
+    return;
+  }
+
+  const { error } = await withTimeout(
+    supabase.from('nutrition_logs').insert({
+      user_id: userId,
+      log_date: logDate,
+      ...payload,
+    }),
+    'Saving meal',
+  );
+  if (error) throw new Error(`Could not save nutrition log: ${error.message}`);
+}
+
 // ─── Image helpers ─────────────────────────────────────────────────────────────
 
 /** Pick an image from the camera roll or capture a new photo. */
@@ -176,30 +451,56 @@ export async function prepareImageForAnalysis(uri: string): Promise<PreparedFood
  * Sends the precomputed base64 payload directly — no storage round-trip needed.
  */
 export async function analyzeFood(imageBase64: string): Promise<FoodAnalysisResult> {
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+  if (userError || !user) {
+    throw new FoodAnalysisError('unauthorized', 'Please sign in to scan food.');
+  }
+
   const { data: sessionData } = await supabase.auth.getSession();
   const token = sessionData?.session?.access_token;
-  if (!token) throw new Error('Not authenticated');
-  if (!imageBase64) throw new Error('Could not read image file');
+  if (!token) throw new FoodAnalysisError('unauthorized', 'Please sign in to scan food.');
+  if (!imageBase64) throw new FoodAnalysisError('analysis_failed', 'Could not read image file');
 
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL!;
   const url = `${supabaseUrl}/functions/v1/analyze-food`;
 
-  const response = await withTimeout(
-    fetch(url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ image_data: imageBase64, mime_type: 'image/jpeg' }),
-    }),
-    'Food analysis request',
-    ANALYSIS_TIMEOUT_MS,
-  );
+  let response: Response;
+  try {
+    response = await withTimeout(
+      fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ image_data: imageBase64, mime_type: 'image/jpeg' }),
+      }),
+      'Food analysis request',
+      ANALYSIS_TIMEOUT_MS,
+    );
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : '';
+    if (msg.includes('timed out')) {
+      throw new FoodAnalysisError('timeout', 'Analysis took too long. Check your connection and try again.');
+    }
+    throw new FoodAnalysisError('analysis_failed', 'Could not reach the food scanner. Check your connection.');
+  }
 
-  const json = await response.json();
-  if (!response.ok) throw new Error(json?.error ?? `HTTP ${response.status}`);
-  return json as FoodAnalysisResult;
+  let json: AnalysisErrorBody & Partial<FoodAnalysisResult>;
+  try {
+    json = await response.json();
+  } catch {
+    throw new FoodAnalysisError('invalid_response', 'We could not analyze this photo. Please try again.');
+  }
+
+  if (!response.ok) {
+    throw mapAnalysisError(response.status, json);
+  }
+
+  return validateAnalysisResult(json);
 }
 
 // ─── Nutrition log helpers ────────────────────────────────────────────────────
@@ -209,6 +510,8 @@ export async function saveNutritionLog(
   items: FoodItem[],
   totals: FoodTotals,
   source: 'photo' | 'manual' = 'photo',
+  meal: MealType = inferMealFromTime(),
+  logDate?: string,
 ): Promise<void> {
   const {
     data: { user },
@@ -218,23 +521,15 @@ export async function saveNutritionLog(
     throw new Error('Not authenticated');
   }
 
-  const today = dayKeyEastern();
+  const date = logDate ?? dayKeyEastern();
 
-  const { data: existing, error: loadError } = await withTimeout(
-    supabase
-      .from('nutrition_logs')
-      .select('id, entries, log_date')
-      .eq('user_id', user.id)
-      .eq('log_date', today)
-      .maybeSingle(),
-    'Loading daily nutrition log',
-  );
-
-  if (loadError) throw new Error(`Could not save nutrition log: ${loadError.message}`);
+  const { data: existing, error: loadError } = await loadDailyLogForUser(user.id, date);
+  if (loadError) throwIfSupabaseError(loadError, 'Could not save nutrition log.');
 
   const newEntry: NutritionEntry = {
     logged_at: new Date().toISOString(),
     source,
+    meal,
     items,
     totals: {
       kcal: Math.round(totals.kcal),
@@ -245,65 +540,10 @@ export async function saveNutritionLog(
   };
 
   const existingEntries = Array.isArray(existing?.entries) ? (existing.entries as NutritionEntry[]) : [];
-  const nextEntries = [...existingEntries, newEntry];
-  const dailyTotals = sumEntries(nextEntries);
-
-  if (existing?.id) {
-    const { error } = await withTimeout(
-      supabase
-        .from('nutrition_logs')
-        .update({
-          entries: nextEntries,
-          items: nextEntries.flatMap((entry) => entry.items),
-          kcal: Math.round(dailyTotals.kcal),
-          protein_g: dailyTotals.protein_g,
-          carbs_g: dailyTotals.carbs_g,
-          fat_g: dailyTotals.fat_g,
-          source: 'photo',
-          logged_at: newEntry.logged_at,
-        })
-        .eq('id', existing.id),
-      'Saving meal',
-    );
-    if (error) throw new Error(`Could not save nutrition log: ${error.message}`);
-    return;
-  }
-
-  const { error } = await withTimeout(
-    supabase
-      .from('nutrition_logs')
-      .insert({
-        user_id: user.id,
-        log_date: today,
-        entries: [newEntry],
-        items,
-        kcal: Math.round(newEntry.totals.kcal),
-        protein_g: newEntry.totals.protein_g,
-        carbs_g: newEntry.totals.carbs_g,
-        fat_g: newEntry.totals.fat_g,
-        source: 'photo',
-        logged_at: newEntry.logged_at,
-      }),
-    'Saving meal',
-  );
-  if (error) throw new Error(`Could not save nutrition log: ${error.message}`);
+  await persistDailyLog(user.id, date, [...existingEntries, newEntry]);
 }
 
-/** Fetch recent nutrition logs for the current user (last N days). */
-export async function fetchRecentNutritionLogs(days = 7): Promise<NutritionLog[]> {
-  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
-
-  const { data, error } = await supabase
-    .from('nutrition_logs')
-    .select('*')
-    .gte('logged_at', since)
-    .order('logged_at', { ascending: false });
-
-  if (error) throw new Error(error.message);
-  return (data ?? []) as NutritionLog[];
-}
-
-/** Fetch one daily nutrition row for YYYY-MM-DD (UTC date key). */
+/** Fetch one daily nutrition row for YYYY-MM-DD (Eastern log_date key). */
 export async function fetchDailyNutritionLog(date: string): Promise<DailyNutritionLog | null> {
   const { data, error } = await withTimeout(
     supabase
@@ -314,21 +554,61 @@ export async function fetchDailyNutritionLog(date: string): Promise<DailyNutriti
     'Loading daily nutrition log',
   );
 
-  if (error) throw new Error(error.message);
+  if (error) throwIfSupabaseError(error, 'Could not load nutrition log.');
   if (!data) return null;
 
-  return {
-    id: data.id,
-    user_id: data.user_id,
-    log_date: data.log_date,
-    entries: Array.isArray(data.entries) ? (data.entries as NutritionEntry[]) : [],
-    kcal: Number(data.kcal ?? 0),
-    protein_g: Number(data.protein_g ?? 0),
-    carbs_g: Number(data.carbs_g ?? 0),
-    fat_g: Number(data.fat_g ?? 0),
-    created_at: data.created_at,
-    logged_at: data.logged_at,
-  };
+  return mapDailyRow(data);
+}
+
+/** Fetch nutrition logs for a calendar week (Mon–Sun). */
+export async function fetchWeekNutritionLogs(weekStartMonday: string): Promise<WeekNutritionSummary> {
+  const dateKeys = weekDateKeysFromMonday(weekStartMonday);
+
+  const { data, error } = await withTimeout(
+    supabase
+      .from('nutrition_logs')
+      .select('id,user_id,log_date,entries,kcal,protein_g,carbs_g,fat_g,created_at,logged_at')
+      .in('log_date', dateKeys),
+    'Loading week nutrition log',
+  );
+
+  if (error) throwIfSupabaseError(error, 'Could not load nutrition log.');
+
+  const byDate = new Map<string, DailyNutritionLog>();
+  for (const row of data ?? []) {
+    byDate.set(row.log_date, mapDailyRow(row));
+  }
+
+  const days = dateKeys.map((dateKey) => ({
+    dateKey,
+    log: byDate.get(dateKey) ?? null,
+  }));
+
+  const totals = days.reduce<FoodTotals>(
+    (acc, day) => ({
+      kcal: acc.kcal + (day.log?.kcal ?? 0),
+      protein_g: acc.protein_g + (day.log?.protein_g ?? 0),
+      carbs_g: acc.carbs_g + (day.log?.carbs_g ?? 0),
+      fat_g: acc.fat_g + (day.log?.fat_g ?? 0),
+    }),
+    { kcal: 0, protein_g: 0, carbs_g: 0, fat_g: 0 },
+  );
+
+  const daysWithData = days.filter((d) => d.log && d.log.kcal > 0).length;
+  const averageKcal = daysWithData > 0 ? Math.round(totals.kcal / daysWithData) : 0;
+
+  return { weekStart: weekStartMonday, days, totals, averageKcal, daysWithData };
+}
+
+/** Count individual meal entries across daily nutrition rows. */
+export function countMealsInNutritionRows(rows: Array<{ entries?: unknown }>): number {
+  let count = 0;
+  for (const row of rows) {
+    if (Array.isArray(row.entries)) {
+      count += row.entries.length;
+    }
+  }
+  return count;
 }
 
 /** Delete one meal entry from a daily nutrition row by entry index. */
@@ -341,15 +621,7 @@ export async function deleteDailyNutritionEntry(date: string, entryIndex: number
     throw new Error('Not authenticated');
   }
 
-  const { data: existing, error: loadError } = await withTimeout(
-    supabase
-      .from('nutrition_logs')
-      .select('id, entries')
-      .eq('user_id', user.id)
-      .eq('log_date', date)
-      .maybeSingle(),
-    'Loading daily nutrition log',
-  );
+  const { data: existing, error: loadError } = await loadDailyLogForUser(user.id, date);
   if (loadError) throw new Error(`Could not delete meal: ${loadError.message}`);
   if (!existing?.id) throw new Error('No daily log found for this date');
 
@@ -359,70 +631,49 @@ export async function deleteDailyNutritionEntry(date: string, entryIndex: number
   }
 
   const nextEntries = existingEntries.filter((_, idx) => idx !== entryIndex);
+  await persistDailyLog(user.id, date, nextEntries);
+}
 
-  if (nextEntries.length === 0) {
-    const { error } = await withTimeout(
-      supabase.from('nutrition_logs').delete().eq('id', existing.id),
-      'Deleting meal',
-    );
-    if (error) throw new Error(`Could not delete meal: ${error.message}`);
-    return;
+/** Update meal slot and/or items on an existing entry. */
+export async function updateNutritionEntry(
+  date: string,
+  entryIndex: number,
+  updates: { meal?: MealType; items?: FoodItem[] },
+): Promise<void> {
+  const {
+    data: { user },
+    error: userError,
+  } = await withTimeout(supabase.auth.getUser(), 'Loading user');
+  if (userError || !user?.id) {
+    throw new Error('Not authenticated');
   }
 
-  const totals = sumEntries(nextEntries);
-  const latestLoggedAt = nextEntries[nextEntries.length - 1]?.logged_at ?? new Date().toISOString();
-  const { error } = await withTimeout(
-    supabase
-      .from('nutrition_logs')
-      .update({
-        entries: nextEntries,
-        items: nextEntries.flatMap((entry) => entry.items),
-        kcal: Math.round(totals.kcal),
-        protein_g: totals.protein_g,
-        carbs_g: totals.carbs_g,
-        fat_g: totals.fat_g,
-        logged_at: latestLoggedAt,
-        source: 'photo',
-      })
-      .eq('id', existing.id),
-    'Deleting meal',
-  );
+  const { data: existing, error: loadError } = await loadDailyLogForUser(user.id, date);
+  if (loadError) throw new Error(`Could not update meal: ${loadError.message}`);
+  if (!existing?.id) throw new Error('No daily log found for this date');
 
-  if (error) throw new Error(`Could not delete meal: ${error.message}`);
-}
+  const existingEntries = Array.isArray(existing.entries) ? (existing.entries as NutritionEntry[]) : [];
+  if (entryIndex < 0 || entryIndex >= existingEntries.length) {
+    throw new Error('Meal entry no longer exists');
+  }
 
-/** Sum macros for a given calendar day (YYYY-MM-DD). */
-export function dailyMacroTotals(logs: NutritionLog[], date: string): FoodTotals {
-  const dayLogs = logs.filter(l => l.logged_at.startsWith(date));
-  return dayLogs.reduce<FoodTotals>(
-    (acc, l) => ({
-      kcal: acc.kcal + (l.kcal ?? 0),
-      protein_g: acc.protein_g + (Number(l.protein_g) ?? 0),
-      carbs_g: acc.carbs_g + (Number(l.carbs_g) ?? 0),
-      fat_g: acc.fat_g + (Number(l.fat_g) ?? 0),
-    }),
-    { kcal: 0, protein_g: 0, carbs_g: 0, fat_g: 0 },
-  );
-}
+  const current = existingEntries[entryIndex];
+  const nextItems = updates.items ?? current.items;
+  const itemTotals = totalsFromItems(nextItems);
 
-// ─── Full pipeline ─────────────────────────────────────────────────────────────
+  const nextEntry: NutritionEntry = {
+    ...current,
+    meal: updates.meal ?? current.meal ?? entryMeal(current),
+    items: nextItems,
+    totals: {
+      kcal: Math.round(itemTotals.kcal),
+      protein_g: itemTotals.protein_g,
+      carbs_g: itemTotals.carbs_g,
+      fat_g: itemTotals.fat_g,
+    },
+  };
 
-/**
- * Convenience: pick → prepare → analyze in one call.
- * Returns the processed local URI and analysis result.
- */
-export async function fullFoodScanPipeline(
-  source: 'camera' | 'library',
-  onProgress?: (step: 'picked' | 'analyzing') => void,
-): Promise<{ imageUri: string; result: FoodAnalysisResult }> {
-  const uri = await pickFoodImage(source);
-  if (!uri) throw new Error('cancelled');
-
-  onProgress?.('picked');
-  const prepared = await prepareImageForAnalysis(uri);
-
-  onProgress?.('analyzing');
-  const result = await analyzeFood(prepared.base64);
-
-  return { imageUri: prepared.uri, result };
+  const nextEntries = [...existingEntries];
+  nextEntries[entryIndex] = nextEntry;
+  await persistDailyLog(user.id, date, nextEntries);
 }

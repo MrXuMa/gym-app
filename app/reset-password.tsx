@@ -7,6 +7,7 @@ import { AuthScreenLayout } from '@/components/auth/AuthScreenLayout';
 import { authPlaceholderColor, authStyles, webInputReset } from '@/components/auth/authStyles';
 import { Button } from '@/components/ui/button';
 import { getPasswordValidationError } from '../lib/passwordValidation';
+import { getErrorMessage } from '@/lib/userFacingError';
 import { supabase } from '../lib/supabase';
 
 export default function ResetPasswordScreen() {
@@ -27,7 +28,7 @@ export default function ResetPasswordScreen() {
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
-      setStatusMessage(data.session ? 'Enter your new password.' : 'Use the reset link from your email to open this page.');
+      setStatusMessage(data.session ? 'Enter your new password.' : 'Open this page from your password reset link.');
       setCheckingSession(false);
     });
 
@@ -46,7 +47,7 @@ export default function ResetPasswordScreen() {
     const passwordError = getPasswordValidationError(password);
 
     if (!session) {
-      setErrors(['Open this page from the password reset email.']);
+      setErrors(['Open this page from your password reset link.']);
       return;
     }
 
@@ -67,8 +68,9 @@ export default function ResetPasswordScreen() {
     const { error } = await supabase.auth.updateUser({ password });
 
     if (error) {
-      setStatusMessage(error.message);
-      setErrors([error.message]);
+      const message = getErrorMessage(error, 'Could not update password.');
+      setStatusMessage(message);
+      setErrors([message]);
       setLoading(false);
       return;
     }

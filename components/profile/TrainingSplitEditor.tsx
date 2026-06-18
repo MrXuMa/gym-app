@@ -110,9 +110,7 @@ export function TrainingSplitEditor({ schedule, catalogMuscles, onChange }: Trai
   return (
     <View style={styles.root}>
       <Text style={styles.hint}>
-        Add multiple muscle groups per day (e.g. chest, back, tri). The same group cannot be added
-        twice on one day, but can repeat on other days. Long-press a chip to move it; tap × on a day
-        chip to remove it.
+        Drag groups onto a day. Long-press to move · tap × to remove.
       </Text>
 
       <ScrollView
@@ -167,9 +165,6 @@ export function TrainingSplitEditor({ schedule, catalogMuscles, onChange }: Trai
       </ScrollView>
 
       <Text style={styles.paletteTitle}>Muscle groups</Text>
-      <Text style={styles.paletteHint}>
-        From your exercise catalog — stack different groups on one day; repeat a group on other days.
-      </Text>
 
       <View style={styles.palette}>
         {paletteMuscles.length === 0 ? (
@@ -339,11 +334,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     marginTop: 8,
-  },
-  paletteHint: {
-    color: homeTheme.colors.textMuted,
-    fontSize: 12,
-    marginTop: -4,
   },
   palette: {
     flexDirection: 'row',

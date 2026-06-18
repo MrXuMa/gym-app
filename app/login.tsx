@@ -3,8 +3,11 @@ import { Pressable, Text, TextInput, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { AuthCard } from '@/components/auth/AuthCard';
 import { AuthScreenLayout } from '@/components/auth/AuthScreenLayout';
+import { BirthdayPicker } from '../components/auth/BirthdayPicker';
+import { HeightPicker } from '../components/auth/HeightPicker';
 import { authPlaceholderColor, authStyles, webInputReset } from '../components/auth/authStyles';
 import { Button } from '@/components/ui/button';
+import { buildBirthday, calculateAge } from '../components/auth/pickerUtils';
 import {
   getEmailForLogin,
   getPasswordResetRedirectUrl,
@@ -16,6 +19,7 @@ import {
 } from '../lib/auth';
 import { getPasswordValidationError } from '../lib/passwordValidation';
 import { supabase } from '../lib/supabase';
+import { WEIGHT_UNIT_LABEL } from '@/constants/units';
 
 type SignUpResultData = {
   user: { identities?: unknown[] } | null;
@@ -30,12 +34,20 @@ export default function Auth() {
   const router = useRouter();
   const [isSigningUp, setIsSigningUp] = useState(false);
   const [email, setEmail] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [birthMonth, setBirthMonth] = useState('');
+  const [birthDay, setBirthDay] = useState('');
+  const [birthYear, setBirthYear] = useState('');
+  const [weight, setWeight] = useState('');
+  const [height, setHeight] = useState('');
   const [loading, setLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
   const [registerErrors, setRegisterErrors] = useState<string[]>([]);
+  const birthday = buildBirthday(birthMonth, birthDay, birthYear);
   const inputStyle = [authStyles.input, webInputReset];
 
   function clearMessages() {
@@ -47,7 +59,8 @@ export default function Auth() {
     clearMessages();
     setPassword('');
     setConfirmPassword('');
-    setUsername('');
+    setFirstName('');
+    setLastName('');
     setIsSigningUp((current) => !current);
   }
 
@@ -86,11 +99,35 @@ export default function Auth() {
 
   function validateSignUpForm() {
     const errors: string[] = [];
+    const parsedWeight = Number.parseFloat(weight);
+    const parsedHeight = Number.parseFloat(height);
     const passwordError = getPasswordValidationError(password, { email, username });
     const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-    if (!email.trim() || !username.trim() || !password || !confirmPassword) {
-      errors.push('Enter your email, username, and password.');
+    if (
+      !email.trim() ||
+      !firstName.trim() ||
+      !lastName.trim() ||
+      !username.trim() ||
+      !password ||
+      !confirmPassword ||
+      !birthMonth ||
+      !birthDay ||
+      !birthYear ||
+      !weight.trim() ||
+      !height
+    ) {
+      errors.push('Please fill out every sign-up field.');
+    }
+
+    const namePattern = /^[A-Za-z][A-Za-z' -]{0,49}$/;
+
+    if (firstName.trim() && !namePattern.test(firstName.trim())) {
+      errors.push('First name can only contain letters, spaces, hyphens, and apostrophes.');
+    }
+
+    if (lastName.trim() && !namePattern.test(lastName.trim())) {
+      errors.push('Last name can only contain letters, spaces, hyphens, and apostrophes.');
     }
 
     if (email.trim() && !emailPattern.test(email.trim())) {
@@ -105,21 +142,31 @@ export default function Auth() {
       errors.push(passwordError);
     }
 
-    if (username.trim() && !/^[A-Za-z0-9_]{3,30}$/.test(username.trim())) {
+    if (!/^[A-Za-z0-9_]{3,30}$/.test(username.trim())) {
       errors.push('Username must use 3-30 letters, numbers, or underscores.');
+    }
+
+    if (calculateAge(birthday) === null) {
+      errors.push('Please select a valid month, day, and year.');
+    }
+
+    if (!Number.isFinite(parsedWeight) || parsedWeight <= 0 || !Number.isFinite(parsedHeight) || parsedHeight <= 0) {
+      errors.push('Weight and height must be positive numbers.');
     }
 
     if (errors.length > 0) {
       setRegisterErrors(errors);
-      return false;
+      return null;
     }
 
     setRegisterErrors([]);
-    return true;
+    return { parsedWeight, parsedHeight };
   }
 
   async function signUpWithEmail() {
-    if (!validateSignUpForm()) return;
+    const validated = validateSignUpForm();
+
+    if (!validated) return;
 
     setStatusMessage('');
     setRegisterErrors([]);
@@ -134,6 +181,11 @@ export default function Auth() {
         options: {
           data: {
             username: username.trim(),
+            first_name: firstName.trim(),
+            last_name: lastName.trim(),
+            birthday,
+            weight: validated.parsedWeight,
+            height: validated.parsedHeight,
           },
         },
       });
@@ -170,8 +222,7 @@ export default function Auth() {
       setStatusMessage('Account created. Log in with your username and password.');
       setIsSigningUp(false);
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : sanitizeSignUpError('Could not create account.');
+      const message = error instanceof Error ? error.message : sanitizeSignUpError('Could not create account.');
       setStatusMessage(message);
       setRegisterErrors([message]);
     } finally {
@@ -231,19 +282,75 @@ export default function Auth() {
         </View>
 
         {isSigningUp && (
-          <View style={authStyles.field}>
-            <TextInput
-              onChangeText={updateField(setUsername)}
-              value={username}
-              placeholder="Username"
-              placeholderTextColor={authPlaceholderColor}
-              autoCapitalize="none"
-              textContentType="username"
-              returnKeyType="next"
-              style={inputStyle}
+          <>
+            <View style={{ flexDirection: 'row', gap: 12 }}>
+              <View style={[authStyles.field, { flex: 1 }]}>
+                <TextInput
+                  onChangeText={updateField(setFirstName)}
+                  value={firstName}
+                  placeholder="First name"
+                  placeholderTextColor={authPlaceholderColor}
+                  autoCapitalize="words"
+                  textContentType="givenName"
+                  returnKeyType="next"
+                  style={inputStyle}
+                />
+              </View>
+
+              <View style={[authStyles.field, { flex: 1 }]}>
+                <TextInput
+                  onChangeText={updateField(setLastName)}
+                  value={lastName}
+                  placeholder="Last name"
+                  placeholderTextColor={authPlaceholderColor}
+                  autoCapitalize="words"
+                  textContentType="familyName"
+                  returnKeyType="next"
+                  style={inputStyle}
+                />
+              </View>
+            </View>
+
+            <View style={authStyles.field}>
+              <TextInput
+                onChangeText={updateField(setUsername)}
+                value={username}
+                placeholder="Username"
+                placeholderTextColor={authPlaceholderColor}
+                autoCapitalize="none"
+                textContentType="username"
+                returnKeyType="next"
+                style={inputStyle}
+              />
+              <Text style={authStyles.inputIcon}>ID</Text>
+            </View>
+
+            <BirthdayPicker
+              month={birthMonth}
+              day={birthDay}
+              year={birthYear}
+              inputStyle={inputStyle}
+              onMonthChange={updateField(setBirthMonth)}
+              onDayChange={updateField(setBirthDay)}
+              onYearChange={updateField(setBirthYear)}
             />
-            <Text style={authStyles.inputIcon}>ID</Text>
-          </View>
+
+            <View style={{ flexDirection: 'row', gap: 12, zIndex: 20 }}>
+              <View style={[authStyles.field, { flex: 1 }]}>
+                <TextInput
+                  onChangeText={updateField(setWeight)}
+                  value={weight}
+                  placeholder={`Weight (${WEIGHT_UNIT_LABEL})`}
+                  placeholderTextColor={authPlaceholderColor}
+                  keyboardType="decimal-pad"
+                  returnKeyType="next"
+                  style={inputStyle}
+                />
+              </View>
+
+              <HeightPicker value={height} inputStyle={inputStyle} onChange={updateField(setHeight)} />
+            </View>
+          </>
         )}
 
         <View style={authStyles.field}>

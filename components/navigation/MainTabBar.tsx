@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -7,6 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { getActiveWorkoutSession } from '@/lib/workoutSession';
 import { homeTheme } from '@/constants/theme';
 import { getErrorMessage } from '@/lib/userFacingError';
+import { notify } from '@/lib/platformAlert';
 
 type TabItem = {
   routeName: string;
@@ -48,7 +49,7 @@ export function MainTabBar({ state, navigation }: BottomTabBarProps) {
       router.push('/start-workout' as never);
     } catch (error) {
       const message = getErrorMessage(error, 'Could not start workout.');
-      Alert.alert('Could not start workout', message);
+      notify('Could not start workout', message);
     } finally {
       setStarting(false);
     }

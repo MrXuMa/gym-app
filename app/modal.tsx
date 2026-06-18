@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchExerciseCatalog } from '@/lib/exercises';
 import { useScrollToDockedCard } from '@/hooks/useScrollToDockedCard';
-import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, Text, View } from 'react-native';
+import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, Text, View } from 'react-native';
+import { confirmAsync, notify } from '@/lib/platformAlert';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { AppScreen } from '@/components/layout/AppScreen';
 import { AddExercisePicker, type ExerciseOption } from '@/components/workout-session/AddExercisePicker';
@@ -73,13 +74,8 @@ export default function EditWorkoutScreen() {
       }
 
       if (workoutMeta.data.status === 'active') {
-        Alert.alert('Active session', 'This workout is still in progress. Opening the live session instead.', [
-          {
-            text: 'OK',
-            onPress: () =>
-              router.replace({ pathname: '/workout-session', params: { workoutId } }),
-          },
-        ]);
+        notify('Active session', 'This workout is still in progress. Opening the live session instead.');
+        router.replace({ pathname: '/workout-session', params: { workoutId } });
         return;
       }
 
@@ -90,7 +86,7 @@ export default function EditWorkoutScreen() {
       setAllExercises(catalog);
     } catch (error) {
       const message = getErrorMessage(error, 'Could not load workout.');
-      Alert.alert('Could not load workout', message);
+      notify('Could not load workout', message);
     } finally {
       setLoading(false);
     }
@@ -135,7 +131,7 @@ export default function EditWorkoutScreen() {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : WORKOUT_EDITOR_COPY.addExerciseFailed;
-      Alert.alert('Could not add exercise', message);
+      notify('Could not add exercise', message);
     }
   }
 
@@ -151,36 +147,35 @@ export default function EditWorkoutScreen() {
       setExercises((current) => current.filter((exercise) => exercise.id !== exerciseId));
     } catch (error) {
       const message = error instanceof Error ? error.message : WORKOUT_EDITOR_COPY.removeExerciseFailed;
-      Alert.alert('Could not remove exercise', message);
+      notify('Could not remove exercise', message);
     } finally {
       setRemovingExerciseId(null);
     }
   }
 
-  function confirmDeleteWorkout() {
+  async function confirmDeleteWorkout() {
     if (!workoutId) {
       return;
     }
 
-    Alert.alert('Delete workout?', 'Remove this session and all logged sets? This cannot be undone.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          setDeleting(true);
-          try {
-            await deleteWorkout(workoutId);
-            router.back();
-          } catch (error) {
-            const message = getErrorMessage(error, 'Could not delete workout.');
-            Alert.alert('Delete failed', message);
-          } finally {
-            setDeleting(false);
-          }
-        },
-      },
-    ]);
+    const confirmed = await confirmAsync({
+      title: 'Delete workout?',
+      message: 'Remove this session and all logged sets? This cannot be undone.',
+      confirmText: 'Delete',
+      destructive: true,
+    });
+    if (!confirmed) return;
+
+    setDeleting(true);
+    try {
+      await deleteWorkout(workoutId);
+      router.back();
+    } catch (error) {
+      const message = getErrorMessage(error, 'Could not delete workout.');
+      notify('Delete failed', message);
+    } finally {
+      setDeleting(false);
+    }
   }
 
   function handleReorderExercises(next: SessionExercise[]) {
@@ -262,7 +257,7 @@ export default function EditWorkoutScreen() {
           }
           secondaryAction={{
             label: 'Delete workout',
-            onPress: confirmDeleteWorkout,
+            onPress: () => void confirmDeleteWorkout(),
             loading: deleting,
             accessibilityLabel: 'Delete workout',
           }}

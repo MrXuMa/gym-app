@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -13,6 +12,7 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { confirmAsync, notify } from '@/lib/platformAlert';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MacroSummary } from '@/components/food/MacroSummary';
 import { MealPicker } from '@/components/food/MealPicker';
@@ -69,7 +69,7 @@ export function EditEntrySheet({
 
   function removeItem(index: number) {
     if (items.length <= 1) {
-      Alert.alert('Cannot remove', 'A meal must have at least one item.');
+      notify('Cannot remove', 'A meal must have at least one item.');
       return;
     }
     setItems((prev) => prev.filter((_, i) => i !== index));
@@ -78,7 +78,7 @@ export function EditEntrySheet({
   async function handleSave() {
     const validItems = items.filter((i) => i.name.trim().length > 0);
     if (validItems.length === 0) {
-      Alert.alert('Missing items', 'Add at least one food item.');
+      notify('Missing items', 'Add at least one food item.');
       return;
     }
     setSaving(true);
@@ -87,34 +87,31 @@ export function EditEntrySheet({
       onSaved();
       onClose();
     } catch (err: unknown) {
-      Alert.alert('Error', err instanceof Error ? err.message : 'Could not save changes');
+      notify('Error', err instanceof Error ? err.message : 'Could not save changes');
     } finally {
       setSaving(false);
     }
   }
 
-  function confirmDelete() {
-    Alert.alert('Delete meal?', 'This removes the meal from your log.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: () => {
-          void (async () => {
-            setSaving(true);
-            try {
-              await deleteDailyNutritionEntry(dateKey, entryIndex);
-              onSaved();
-              onClose();
-            } catch (err: unknown) {
-              Alert.alert('Error', err instanceof Error ? err.message : 'Could not delete meal');
-            } finally {
-              setSaving(false);
-            }
-          })();
-        },
-      },
-    ]);
+  async function confirmDelete() {
+    const confirmed = await confirmAsync({
+      title: 'Delete meal?',
+      message: 'This removes the meal from your log.',
+      confirmText: 'Delete',
+      destructive: true,
+    });
+    if (!confirmed) return;
+
+    setSaving(true);
+    try {
+      await deleteDailyNutritionEntry(dateKey, entryIndex);
+      onSaved();
+      onClose();
+    } catch (err: unknown) {
+      notify('Error', err instanceof Error ? err.message : 'Could not delete meal');
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -217,7 +214,7 @@ export function EditEntrySheet({
               <Text style={styles.addItemText}>Add item</Text>
             </Pressable>
 
-            <Pressable style={styles.deleteBtn} onPress={confirmDelete} disabled={saving}>
+            <Pressable style={styles.deleteBtn} onPress={() => void confirmDelete()} disabled={saving}>
               <Ionicons name="trash-outline" size={18} color={homeTheme.colors.destructive} />
               <Text style={styles.deleteText}>Delete meal</Text>
             </Pressable>

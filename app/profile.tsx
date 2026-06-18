@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from 'react';
 import { getErrorMessage } from '@/lib/userFacingError';
 import {
   ActivityIndicator,
-  Alert,
   Keyboard,
   Pressable,
   ScrollView,
@@ -12,6 +11,7 @@ import {
   View,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
+import { confirmAsync, notify } from '@/lib/platformAlert';
 import { Ionicons } from '@expo/vector-icons';
 import { AppScreen } from '@/components/layout/AppScreen';
 import { supabase } from '@/lib/supabase';
@@ -96,7 +96,7 @@ export default function ProfileScreen() {
 
   async function signOut() {
     const { error } = await supabase.auth.signOut();
-    if (error) Alert.alert('Sign out failed', getErrorMessage(error, 'Could not sign out.'));
+    if (error) notify('Sign out failed', getErrorMessage(error, 'Could not sign out.'));
   }
 
   async function handleSaveWeight() {
@@ -104,7 +104,7 @@ export default function ProfileScreen() {
     const validationError = getWeightValidationError(parsed);
 
     if (validationError || parsed == null) {
-      Alert.alert('Invalid weight', validationError ?? 'Enter a number.');
+      notify('Invalid weight', validationError ?? 'Enter a number.');
       return;
     }
 
@@ -118,25 +118,20 @@ export default function ProfileScreen() {
       await loadLogs();
     } catch (error) {
       const message = getErrorMessage(error, 'Could not update weight.');
-      Alert.alert('Could not update weight', message);
+      notify('Could not update weight', message);
     } finally {
       setSavingWeight(false);
     }
   }
 
-  function confirmDeleteLog(log: WeightLogEntry) {
-    Alert.alert(
-      'Delete weight log?',
-      `Remove the ${log.weight} ${WEIGHT_UNIT_LABEL} entry from ${formatRelativeLogDate(log.recordedAt)}. If this is your most recent log, your current weight will fall back to the previous entry.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => void handleDeleteLog(log),
-        },
-      ],
-    );
+  async function confirmDeleteLog(log: WeightLogEntry) {
+    const confirmed = await confirmAsync({
+      title: 'Delete weight log?',
+      message: `Remove the ${log.weight} ${WEIGHT_UNIT_LABEL} entry from ${formatRelativeLogDate(log.recordedAt)}. If this is your most recent log, your current weight will fall back to the previous entry.`,
+      confirmText: 'Delete',
+      destructive: true,
+    });
+    if (confirmed) await handleDeleteLog(log);
   }
 
   async function handleDeleteLog(log: WeightLogEntry) {
@@ -146,7 +141,7 @@ export default function ProfileScreen() {
       await Promise.all([reload(), loadLogs()]);
     } catch (error) {
       const message = getErrorMessage(error, 'Could not delete log.');
-      Alert.alert('Could not delete log', message);
+      notify('Could not delete log', message);
     } finally {
       setDeletingLogId(null);
     }
@@ -291,7 +286,7 @@ export default function ProfileScreen() {
                             styles.logDeleteButton,
                             (anyDeleting || pressed) && styles.logDeleteButtonPressed,
                           ]}
-                          onPress={() => confirmDeleteLog(log)}
+                          onPress={() => void confirmDeleteLog(log)}
                           disabled={anyDeleting}
                           hitSlop={8}
                           accessibilityRole="button"

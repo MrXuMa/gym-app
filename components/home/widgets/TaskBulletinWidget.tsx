@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { getErrorMessage } from '@/lib/userFacingError';
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -10,6 +9,7 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { confirmAsync, notify } from '@/lib/platformAlert';
 import { getWidgetSizing } from '@/components/home/widgetSizing';
 import { TaskBulletinAddSheet } from '@/components/home/TaskBulletinAddSheet';
 import { WidgetCard } from '@/components/home/WidgetCard';
@@ -38,43 +38,45 @@ export function TaskBulletinWidget() {
     await addTask(title, taskType, resetTimeLocal);
   }
 
-  function handleDeleteRecurring(task: BulletinTask) {
-    Alert.alert('Delete recurring task?', `"${task.title}" will not come back.`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: () => {
-          void removeTask(task.id).catch((error) => {
-            const message = getErrorMessage(error, 'Could not delete task.');
-            Alert.alert('Could not delete task', message);
-          });
-        },
-      },
-    ]);
+  async function handleDeleteRecurring(task: BulletinTask) {
+    const confirmed = await confirmAsync({
+      title: 'Delete recurring task?',
+      message: `"${task.title}" will not come back.`,
+      confirmText: 'Delete',
+      destructive: true,
+    });
+    if (!confirmed) return;
+
+    try {
+      await removeTask(task.id);
+    } catch (error) {
+      const message = getErrorMessage(error, 'Could not delete task.');
+      notify('Could not delete task', message);
+    }
   }
 
   function handleComplete(task: BulletinTask) {
     void completeTask(task).catch((error) => {
       const message = getErrorMessage(error, 'Could not complete task.');
-      Alert.alert('Could not complete task', message);
+      notify('Could not complete task', message);
     });
   }
 
-  function handleRemove(task: BulletinTask) {
-    Alert.alert('Remove task?', task.title, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Remove',
-        style: 'destructive',
-        onPress: () => {
-          void removeTask(task.id).catch((error) => {
-            const message = getErrorMessage(error, 'Could not remove task.');
-            Alert.alert('Could not remove task', message);
-          });
-        },
-      },
-    ]);
+  async function handleRemove(task: BulletinTask) {
+    const confirmed = await confirmAsync({
+      title: 'Remove task?',
+      message: task.title,
+      confirmText: 'Remove',
+      destructive: true,
+    });
+    if (!confirmed) return;
+
+    try {
+      await removeTask(task.id);
+    } catch (error) {
+      const message = getErrorMessage(error, 'Could not remove task.');
+      notify('Could not remove task', message);
+    }
   }
 
   return (
@@ -104,7 +106,7 @@ export function TaskBulletinWidget() {
                   task={task}
                   busy={mutatingId === task.id}
                   onComplete={() => handleComplete(task)}
-                  onRemove={() => handleRemove(task)}
+                  onRemove={() => void handleRemove(task)}
                 />
               ))}
             </ScrollView>
@@ -136,7 +138,7 @@ export function TaskBulletinWidget() {
         mutatingId={mutatingId}
         onClose={() => setAddVisible(false)}
         onAdd={handleAdd}
-        onDeleteRecurring={handleDeleteRecurring}
+        onDeleteRecurring={(task) => void handleDeleteRecurring(task)}
       />
     </>
   );

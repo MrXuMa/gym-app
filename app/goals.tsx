@@ -1,7 +1,6 @@
 import { useCallback, useState } from 'react';
 import { getErrorMessage } from '@/lib/userFacingError';
 import {
-  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -11,6 +10,7 @@ import {
   View,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
+import { notify } from '@/lib/platformAlert';
 import { AppScreen } from '@/components/layout/AppScreen';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -41,7 +41,7 @@ export default function GoalsScreen() {
       setHasExistingGoals(goals.length > 0);
     } catch (error) {
       const message = getErrorMessage(error, 'Could not load goals.');
-      Alert.alert('Could not load goals', message);
+      notify('Could not load goals', message);
     } finally {
       setLoading(false);
     }
@@ -64,7 +64,7 @@ export default function GoalsScreen() {
   function applySampleGoal(sample: string) {
     const emptyIndex = firstEmptySlotIndex(slots);
     if (emptyIndex == null) {
-      Alert.alert('All slots full', 'Clear a goal slot to use a sample.');
+      notify('All slots full', 'Clear a goal slot to use a sample.');
       return;
     }
 
@@ -75,14 +75,14 @@ export default function GoalsScreen() {
     for (const slot of slots) {
       const error = validateGoalText(slot);
       if (error) {
-        Alert.alert('Invalid goal', error);
+        notify('Invalid goal', error);
         return;
       }
     }
 
     const filled = slots.map((slot) => slot.trim()).filter(Boolean);
     if (filled.length === 0) {
-      Alert.alert('Add a goal', 'Enter at least one personal goal.');
+      notify('Add a goal', 'Enter at least one personal goal.');
       return;
     }
 
@@ -93,7 +93,7 @@ export default function GoalsScreen() {
       router.back();
     } catch (error) {
       const message = getErrorMessage(error, 'Could not save goals.');
-      Alert.alert('Could not save goals', message);
+      notify('Could not save goals', message);
     } finally {
       setSaving(false);
     }

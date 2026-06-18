@@ -2,13 +2,13 @@ import { useCallback, useState } from 'react';
 import { getErrorMessage } from '@/lib/userFacingError';
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import { confirmAsync, notify } from '@/lib/platformAlert';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { AppScreen } from '@/components/layout/AppScreen';
 import { Button } from '@/components/ui/button';
@@ -52,7 +52,8 @@ export default function TrainingSplitScreen() {
       setSavedState(filtered);
     } catch (error) {
       const message = getErrorMessage(error, 'Could not load training split.');
-      Alert.alert('Could not load split', message, [{ text: 'OK', onPress: () => router.back() }]);
+      notify('Could not load split', message);
+      router.back();
     } finally {
       setLoading(false);
     }
@@ -68,7 +69,7 @@ export default function TrainingSplitScreen() {
     splitState != null &&
     savedState != null &&
     (splitState.enabled !== savedState.enabled ||
-      (splitState.enabled && schedulesEqual(splitState.schedule, savedState.schedule)));
+      (splitState.enabled && !schedulesEqual(splitState.schedule, savedState.schedule)));
 
   function updateSchedule(next: TrainingSplitSchedule) {
     setSplitState((prev) => (prev ? { ...prev, schedule: next, enabled: true } : prev));
@@ -86,50 +87,39 @@ export default function TrainingSplitScreen() {
       };
       setSplitState(filtered);
       setSavedState(filtered);
-      Alert.alert('Saved', 'Your weekly split is updated. Coach will use this plan.');
+      notify('Saved', 'Your weekly split is updated. Coach will use this plan.');
     } catch (error) {
       const message = getErrorMessage(error, 'Could not save split.');
-      Alert.alert('Could not save split', message);
+      notify('Could not save split', message);
     } finally {
       setSaving(false);
     }
   }
 
-  function handleResetDefault() {
-    Alert.alert(
-      'Reset to default split?',
-      'This restores the default Push/Pull/Legs weekly plan and re-enables split-based workouts.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Reset',
-          onPress: () => {
-            const nextSchedule = catalogMuscles.length
-              ? filterScheduleToCatalog(DEFAULT_TRAINING_SPLIT, catalogMuscles)
-              : { ...DEFAULT_TRAINING_SPLIT };
-            setSplitState({ enabled: true, schedule: nextSchedule });
-          },
-        },
-      ],
-    );
+  async function handleResetDefault() {
+    const confirmed = await confirmAsync({
+      title: 'Reset to default split?',
+      message: 'This restores the default Push/Pull/Legs weekly plan and re-enables split-based workouts.',
+      confirmText: 'Reset',
+    });
+    if (!confirmed) return;
+
+    const nextSchedule = catalogMuscles.length
+      ? filterScheduleToCatalog(DEFAULT_TRAINING_SPLIT, catalogMuscles)
+      : { ...DEFAULT_TRAINING_SPLIT };
+    setSplitState({ enabled: true, schedule: nextSchedule });
   }
 
-  function handleRemoveSplit() {
-    Alert.alert(
-      'Remove training split?',
-      'Coach will no longer follow a weekly plan. Workouts will be based on your request, recent logs, or a starter push/pull/legs rotation.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Remove split',
-          style: 'destructive',
-          onPress: () => void confirmRemoveSplit(),
-        },
-      ],
-    );
-  }
+  async function handleRemoveSplit() {
+    const confirmed = await confirmAsync({
+      title: 'Remove training split?',
+      message:
+        'Coach will no longer follow a weekly plan. Workouts will be based on your request, recent logs, or a starter push/pull/legs rotation.',
+      confirmText: 'Remove split',
+      destructive: true,
+    });
+    if (!confirmed) return;
 
-  async function confirmRemoveSplit() {
     setRemoving(true);
     try {
       const saved = await removeTrainingSplit();
@@ -139,10 +129,10 @@ export default function TrainingSplitScreen() {
       };
       setSplitState(filtered);
       setSavedState(filtered);
-      Alert.alert('Split removed', 'Coach will use your requests and workout history instead.');
+      notify('Split removed', 'Coach will use your requests and workout history instead.');
     } catch (error) {
       const message = getErrorMessage(error, 'Could not remove split.');
-      Alert.alert('Could not remove split', message);
+      notify('Could not remove split', message);
     } finally {
       setRemoving(false);
     }
@@ -199,7 +189,7 @@ export default function TrainingSplitScreen() {
 
                 <Pressable
                   style={({ pressed }) => [styles.secondaryButton, pressed && styles.secondaryButtonPressed]}
-                  onPress={handleResetDefault}
+                  onPress={() => void handleResetDefault()}
                   disabled={saving || removing}
                 >
                   <Text style={styles.secondaryButtonText}>Reset to default PPL split</Text>
@@ -207,7 +197,7 @@ export default function TrainingSplitScreen() {
 
                 <Pressable
                   style={({ pressed }) => [styles.dangerButton, pressed && styles.secondaryButtonPressed]}
-                  onPress={handleRemoveSplit}
+                  onPress={() => void handleRemoveSplit()}
                   disabled={saving || removing}
                 >
                   <Text style={styles.dangerButtonText}>

@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Image,
   Pressable,
   ScrollView,
@@ -10,6 +9,7 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { notify } from '@/lib/platformAlert';
 import { useRouter } from 'expo-router';
 import { AppScreen } from '@/components/layout/AppScreen';
 import { FoodScanErrorScreen } from '@/components/food/FoodScanErrorScreen';
@@ -109,7 +109,7 @@ export default function FoodScanScreen() {
 
   async function confirmLog() {
     if (items.length === 0) {
-      Alert.alert('No items', 'Nothing to log.');
+      notify('No items', 'Nothing to log.');
       return;
     }
     setStep('saving');
@@ -119,7 +119,7 @@ export default function FoodScanScreen() {
       setStep('done');
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Could not save';
-      Alert.alert('Error', msg);
+      notify('Error', msg);
       setStep('review');
     }
   }

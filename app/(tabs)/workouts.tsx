@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, StyleSheet, Text } from 'react-native';
+import { ActivityIndicator, FlatList, StyleSheet, Text } from 'react-native';
 import { useRouter } from 'expo-router';
 import { AppScreen } from '@/components/layout/AppScreen';
 import { useOpenSwipeable } from '@/hooks/useOpenSwipeable';
@@ -7,6 +7,7 @@ import { WorkoutListRow } from '@/components/workouts/WorkoutListRow';
 import { deleteWorkout, fetchCompletedWorkouts, type WorkoutListItem } from '@/lib/workouts';
 import { homeTheme } from '@/constants/theme';
 import { getErrorMessage } from '@/lib/userFacingError';
+import { confirmAsync, notify } from '@/lib/platformAlert';
 
 export default function WorkoutsTabScreen() {
   const router = useRouter();
@@ -22,7 +23,7 @@ export default function WorkoutsTabScreen() {
       setWorkouts(items);
     } catch (error) {
       const message = getErrorMessage(error, 'Could not load workouts.');
-      Alert.alert('Could not load workouts', message);
+      notify('Could not load workouts', message);
     } finally {
       setLoading(false);
     }
@@ -32,19 +33,14 @@ export default function WorkoutsTabScreen() {
     loadWorkouts();
   }, [loadWorkouts]);
 
-  function confirmDelete(workout: WorkoutListItem) {
-    Alert.alert(
-      'Delete workout?',
-      `Remove "${workout.title}" and all logged sets? This cannot be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => handleDelete(workout.id),
-        },
-      ],
-    );
+  async function confirmDelete(workout: WorkoutListItem) {
+    const confirmed = await confirmAsync({
+      title: 'Delete workout?',
+      message: `Remove "${workout.title}" and all logged sets? This cannot be undone.`,
+      confirmText: 'Delete',
+      destructive: true,
+    });
+    if (confirmed) await handleDelete(workout.id);
   }
 
   async function handleDelete(workoutId: string) {
@@ -55,7 +51,7 @@ export default function WorkoutsTabScreen() {
       setWorkouts((current) => current.filter((workout) => workout.id !== workoutId));
     } catch (error) {
       const message = getErrorMessage(error, 'Could not delete workout.');
-      Alert.alert('Delete failed', message);
+      notify('Delete failed', message);
     } finally {
       setDeletingId(null);
     }
@@ -85,7 +81,7 @@ export default function WorkoutsTabScreen() {
                 closeOpenRow();
                 router.push({ pathname: '/modal', params: { workoutId: item.id } });
               }}
-              onDelete={() => confirmDelete(item)}
+              onDelete={() => void confirmDelete(item)}
               onSwipeableWillOpen={handleSwipeableWillOpen}
             />
           )}

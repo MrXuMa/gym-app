@@ -15,7 +15,6 @@ import { useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Keyboard,
   RefreshControl,
   ScrollView,
@@ -23,6 +22,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { notify } from '@/lib/platformAlert';
 
 export default function CoachScreen() {
   const router = useRouter();
@@ -45,7 +45,7 @@ export default function CoachScreen() {
     Keyboard.dismiss();
 
     if (!isConfigured) {
-      Alert.alert(
+      notify(
         'Coach unavailable',
         'Supabase is not configured in this build. Workout generation requires a connected backend.',
       );
@@ -57,19 +57,19 @@ export default function CoachScreen() {
       if (created) setPrompt('');
     } catch (error) {
       if (error instanceof CoachNotConfiguredError) {
-        Alert.alert('Coach unavailable', error.message);
+        notify('Coach unavailable', error.message);
         return;
       }
       if (error instanceof CoachServiceUnavailableError) {
-        Alert.alert('Coach unavailable', error.message);
+        notify('Coach unavailable', error.message);
         return;
       }
       if (error instanceof CoachUnauthorizedError) {
-        Alert.alert('Sign in required', error.message);
+        notify('Sign in required', error.message);
         return;
       }
       const message = getErrorMessage(error, 'Could not request workout.');
-      Alert.alert('Could not generate workout', message);
+      notify('Could not generate workout', message);
     }
   }
 
@@ -79,7 +79,7 @@ export default function CoachScreen() {
       await requestWorkout(job.prompt);
     } catch (error) {
       const message = getErrorMessage(error, 'Could not retry workout generation.');
-      Alert.alert('Could not generate workout', message);
+      notify('Could not generate workout', message);
     }
   }
 

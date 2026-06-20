@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, FlatList, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { AppScreen } from '@/components/layout/AppScreen';
 import { fetchExerciseCatalog } from '@/lib/exercises';
 import { homeTheme } from '@/constants/theme';
 import { getErrorMessage } from '@/lib/userFacingError';
+import { notify } from '@/lib/platformAlert';
 
 const ALL_MUSCLES = 'All';
 
@@ -20,7 +21,7 @@ export default function ExercisesScreen() {
         setExercises(rows);
       } catch (error) {
         const message = getErrorMessage(error, 'Could not load exercises.');
-        Alert.alert('Could not load exercises', message);
+        notify('Could not load exercises', message);
       } finally {
         setLoading(false);
       }

@@ -2,7 +2,6 @@ import { useCallback, useState } from 'react';
 import { getErrorMessage } from '@/lib/userFacingError';
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -11,6 +10,7 @@ import {
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { notify } from '@/lib/platformAlert';
 import { AppScreen } from '@/components/layout/AppScreen';
 import { Button } from '@/components/ui/button';
 import {
@@ -36,7 +36,7 @@ export default function LiftingLevelScreen() {
       setInitial(level);
     } catch (error) {
       const message = getErrorMessage(error, 'Could not load lifting level.');
-      Alert.alert('Could not load lifting level', message);
+      notify('Could not load lifting level', message);
     } finally {
       setLoading(false);
     }
@@ -50,7 +50,7 @@ export default function LiftingLevelScreen() {
 
   async function handleSave() {
     if (!selected) {
-      Alert.alert('Select a level', 'Choose the option that best matches your training history.');
+      notify('Select a level', 'Choose the option that best matches your training history.');
       return;
     }
 
@@ -62,7 +62,7 @@ export default function LiftingLevelScreen() {
       router.back();
     } catch (error) {
       const message = getErrorMessage(error, 'Could not save lifting level.');
-      Alert.alert('Could not save', message);
+      notify('Could not save', message);
     } finally {
       setSaving(false);
     }

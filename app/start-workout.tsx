@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from 'react';
 import { getErrorMessage } from '@/lib/userFacingError';
 import {
   ActivityIndicator,
-  Alert,
   FlatList,
   Pressable,
   StyleSheet,
@@ -11,6 +10,7 @@ import {
   View,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
+import { confirmAsync, notify } from '@/lib/platformAlert';
 import { AppScreen } from '@/components/layout/AppScreen';
 import { useOpenSwipeable } from '@/hooks/useOpenSwipeable';
 import { StartWorkoutModeToggle, type StartWorkoutMode } from '@/components/start-workout/StartWorkoutModeToggle';
@@ -48,7 +48,7 @@ export default function StartWorkoutScreen() {
       );
     } catch (error) {
       const message = getErrorMessage(error, 'Could not load templates.');
-      Alert.alert('Could not load templates', message);
+      notify('Could not load templates', message);
     } finally {
       setLoadingTemplates(false);
     }
@@ -81,7 +81,7 @@ export default function StartWorkoutScreen() {
     try {
       if (mode === 'blank') {
         if (!isValidWorkoutTitle(workoutTitle)) {
-          Alert.alert('Name too long', 'Workout name must be 80 characters or fewer.');
+          notify('Name too long', 'Workout name must be 80 characters or fewer.');
           return;
         }
 
@@ -98,7 +98,7 @@ export default function StartWorkoutScreen() {
       router.replace({ pathname: '/workout-session', params: { workoutId } });
     } catch (error) {
       const message = getErrorMessage(error, 'Could not start workout.');
-      Alert.alert('Could not start workout', message);
+      notify('Could not start workout', message);
     } finally {
       setGoing(false);
     }
@@ -112,31 +112,29 @@ export default function StartWorkoutScreen() {
     router.push({ pathname: '/workout-template/editor', params: { templateId } } as never);
   }
 
-  function confirmDeleteTemplate(template: WorkoutTemplateListItem) {
-    Alert.alert('Delete template?', `Remove "${template.name}"? This cannot be undone.`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          setDeletingTemplateId(template.id);
+  async function confirmDeleteTemplate(template: WorkoutTemplateListItem) {
+    const confirmed = await confirmAsync({
+      title: 'Delete template?',
+      message: `Remove "${template.name}"? This cannot be undone.`,
+      confirmText: 'Delete',
+      destructive: true,
+    });
+    if (!confirmed) return;
 
-          try {
-            await deleteWorkoutTemplate(template.id);
-            if (selectedTemplateId === template.id) {
-              setSelectedTemplateId(null);
-            }
+    setDeletingTemplateId(template.id);
+    try {
+      await deleteWorkoutTemplate(template.id);
+      if (selectedTemplateId === template.id) {
+        setSelectedTemplateId(null);
+      }
 
-            await loadTemplates();
-          } catch (error) {
-            const message = getErrorMessage(error, 'Could not delete template.');
-            Alert.alert('Could not delete template', message);
-          } finally {
-            setDeletingTemplateId(null);
-          }
-        },
-      },
-    ]);
+      await loadTemplates();
+    } catch (error) {
+      const message = getErrorMessage(error, 'Could not delete template.');
+      notify('Could not delete template', message);
+    } finally {
+      setDeletingTemplateId(null);
+    }
   }
 
   const canGo = mode === 'blank' || selectedTemplateId !== null;
@@ -191,7 +189,7 @@ export default function StartWorkoutScreen() {
                     deleting={deletingTemplateId === item.id}
                     onSelect={() => setSelectedTemplateId(item.id)}
                     onEdit={() => handleEditTemplate(item.id)}
-                    onDelete={() => confirmDeleteTemplate(item)}
+                    onDelete={() => void confirmDeleteTemplate(item)}
                     onSwipeableWillOpen={handleSwipeableWillOpen}
                   />
                 )}

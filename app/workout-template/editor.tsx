@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getErrorMessage } from '@/lib/userFacingError';
 import {
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -11,6 +10,7 @@ import {
   View,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { confirmAsync, notify } from '@/lib/platformAlert';
 import { AppScreen } from '@/components/layout/AppScreen';
 import { useDockedSetEditor } from '@/hooks/useDockedSetEditor';
 import { useScrollToDockedCard } from '@/hooks/useScrollToDockedCard';
@@ -82,7 +82,7 @@ export default function WorkoutTemplateEditorScreen() {
       setCoachWarnings(job.templateDraft.warnings ?? []);
     } catch (error) {
       const message = getErrorMessage(error, 'Could not load coach draft.');
-      Alert.alert('Could not load coach draft', message);
+      notify('Could not load coach draft', message);
       router.back();
     } finally {
       setLoading(false);
@@ -103,7 +103,7 @@ export default function WorkoutTemplateEditorScreen() {
       setCoachWarnings([]);
     } catch (error) {
       const message = getErrorMessage(error, 'Could not load template.');
-      Alert.alert('Could not load template', message);
+      notify('Could not load template', message);
       router.back();
     } finally {
       setLoading(false);
@@ -117,7 +117,7 @@ export default function WorkoutTemplateEditorScreen() {
 
     void bootstrap().catch((error) => {
       const message = getErrorMessage(error, 'Could not load exercises.');
-      Alert.alert('Could not load exercises', message);
+      notify('Could not load exercises', message);
     });
   }, []);
 
@@ -165,12 +165,12 @@ export default function WorkoutTemplateEditorScreen() {
 
   async function handleSave() {
     if (!isValidWorkoutTitle(templateName)) {
-      Alert.alert('Name too long', 'Template name must be 80 characters or fewer.');
+      notify('Name too long', 'Template name must be 80 characters or fewer.');
       return;
     }
 
     if (dockedEditor) {
-      Alert.alert('Unsaved set', 'Tap Save on the set editor below before saving this template.');
+      notify('Unsaved set', 'Tap Save on the set editor below before saving this template.');
       return;
     }
 
@@ -191,37 +191,35 @@ export default function WorkoutTemplateEditorScreen() {
       router.replace('/start-workout' as never);
     } catch (error) {
       const message = getErrorMessage(error, 'Could not save template.');
-      Alert.alert('Could not save template', message);
+      notify('Could not save template', message);
     } finally {
       setSaving(false);
     }
   }
 
-  function confirmDeleteTemplate() {
+  async function confirmDeleteTemplate() {
     if (!templateId) {
       return;
     }
 
-    Alert.alert('Delete template?', 'Remove this template permanently?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          setDeleting(true);
+    const confirmed = await confirmAsync({
+      title: 'Delete template?',
+      message: 'Remove this template permanently?',
+      confirmText: 'Delete',
+      destructive: true,
+    });
+    if (!confirmed) return;
 
-          try {
-            await deleteWorkoutTemplate(templateId);
-            router.replace('/start-workout' as never);
-          } catch (error) {
-            const message = getErrorMessage(error, 'Could not delete template.');
-            Alert.alert('Could not delete template', message);
-          } finally {
-            setDeleting(false);
-          }
-        },
-      },
-    ]);
+    setDeleting(true);
+    try {
+      await deleteWorkoutTemplate(templateId);
+      router.replace('/start-workout' as never);
+    } catch (error) {
+      const message = getErrorMessage(error, 'Could not delete template.');
+      notify('Could not delete template', message);
+    } finally {
+      setDeleting(false);
+    }
   }
 
   const renderExercise = useMemo(
@@ -310,7 +308,7 @@ export default function WorkoutTemplateEditorScreen() {
             isEditing
               ? {
                   label: 'Delete template',
-                  onPress: confirmDeleteTemplate,
+                  onPress: () => void confirmDeleteTemplate(),
                   loading: deleting,
                   accessibilityLabel: 'Delete template',
                 }

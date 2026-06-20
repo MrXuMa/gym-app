@@ -1,6 +1,7 @@
-import { Alert, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { homeTheme } from '@/constants/theme';
+import { confirmAsync } from '@/lib/platformAlert';
 import type { WidgetDefinition, WidgetEditAction } from '@/components/home/widgetRegistry';
 
 type WidgetEditSheetProps = {
@@ -28,25 +29,20 @@ export function WidgetEditSheet({
     onClose();
     setTimeout(() => onMoveWidget(definition), 0);
   }
-  function handleRemove() {
+  async function handleRemove() {
     if (!definition) {
       return;
     }
-    Alert.alert(
-      'Remove widget?',
-      `${definition.title} will disappear from your home screen. You can add it back later from the + button.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Remove',
-          style: 'destructive',
-          onPress: async () => {
-            await onRemove(definition);
-            onClose();
-          },
-        },
-      ],
-    );
+    const confirmed = await confirmAsync({
+      title: 'Remove widget?',
+      message: `${definition.title} will disappear from your home screen. You can add it back later from the + button.`,
+      confirmText: 'Remove',
+      destructive: true,
+    });
+    if (!confirmed) return;
+
+    await onRemove(definition);
+    onClose();
   }
 
   function handleAction(action: WidgetEditAction) {
@@ -98,7 +94,7 @@ export function WidgetEditSheet({
                 ))}
                 <Pressable
                   style={({ pressed }) => [styles.action, styles.removeAction, pressed && styles.actionPressed]}
-                  onPress={handleRemove}
+                  onPress={() => void handleRemove()}
                 >
                   <Ionicons name="trash-outline" size={20} color={homeTheme.colors.destructive} />
                   <Text style={[styles.actionLabel, styles.removeLabel]}>Remove widget</Text>

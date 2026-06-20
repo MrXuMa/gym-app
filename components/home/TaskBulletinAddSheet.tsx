@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { getErrorMessage } from '@/lib/userFacingError';
 import {
   ActivityIndicator,
-  Alert,
   Modal,
   Pressable,
   ScrollView,
@@ -11,6 +10,7 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { notify } from '@/lib/platformAlert';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { LocalTimePicker } from '@/components/home/LocalTimePicker';
@@ -77,12 +77,12 @@ export function TaskBulletinAddSheet({
 
   async function handleSave() {
     if (totalCount >= MAX_BULLETIN_TASKS) {
-      Alert.alert('Task limit reached', `You can have up to ${MAX_BULLETIN_TASKS} tasks saved.`);
+      notify('Task limit reached', `You can have up to ${MAX_BULLETIN_TASKS} tasks saved.`);
       return;
     }
 
     if (activeCount >= MAX_BULLETIN_TASKS) {
-      Alert.alert('Task limit reached', `You can have up to ${MAX_BULLETIN_TASKS} active tasks on the bulletin.`);
+      notify('Task limit reached', `You can have up to ${MAX_BULLETIN_TASKS} active tasks on the bulletin.`);
       return;
     }
 
@@ -94,7 +94,7 @@ export function TaskBulletinAddSheet({
       onClose();
     } catch (error) {
       const message = getErrorMessage(error, 'Could not add task.');
-      Alert.alert('Could not add task', message);
+      notify('Could not add task', message);
     } finally {
       setSaving(false);
     }

@@ -4,7 +4,6 @@ import { useScrollToDockedCard } from '@/hooks/useScrollToDockedCard';
 import { getErrorMessage } from '@/lib/userFacingError';
 import {
   ActivityIndicator,
-  Alert,
   BackHandler,
   KeyboardAvoidingView,
   Platform,
@@ -12,6 +11,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { confirmAsync, notify } from '@/lib/platformAlert';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { AppScreen } from '@/components/layout/AppScreen';
 import { AddExercisePicker, type ExerciseOption } from '@/components/workout-session/AddExercisePicker';
@@ -89,7 +89,7 @@ export default function WorkoutSessionScreen() {
         setAllExercises(catalog);
       } catch (error) {
         const message = getErrorMessage(error, 'Could not load workout session.');
-        Alert.alert('Session error', message);
+        notify('Session error', message);
       } finally {
         setLoading(false);
       }
@@ -140,7 +140,7 @@ export default function WorkoutSessionScreen() {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : WORKOUT_EDITOR_COPY.addExerciseFailed;
-      Alert.alert('Could not add exercise', message);
+      notify('Could not add exercise', message);
     }
   }
 
@@ -156,21 +156,21 @@ export default function WorkoutSessionScreen() {
       setExercises((current) => current.filter((exercise) => exercise.id !== exerciseId));
     } catch (error) {
       const message = error instanceof Error ? error.message : WORKOUT_EDITOR_COPY.removeExerciseFailed;
-      Alert.alert('Could not remove exercise', message);
+      notify('Could not remove exercise', message);
     } finally {
       setRemovingExerciseId(null);
     }
   }
 
-  function confirmDiscardSession() {
-    Alert.alert(
-      'Discard session?',
-      'This will delete the entire workout session and all logged data. This cannot be undone.',
-      [
-        { text: 'Keep going', style: 'cancel' },
-        { text: 'Discard', style: 'destructive', onPress: handleDiscardSession },
-      ],
-    );
+  async function confirmDiscardSession() {
+    const confirmed = await confirmAsync({
+      title: 'Discard session?',
+      message: 'This will delete the entire workout session and all logged data. This cannot be undone.',
+      confirmText: 'Discard',
+      cancelText: 'Keep going',
+      destructive: true,
+    });
+    if (confirmed) await handleDiscardSession();
   }
 
   async function handleDiscardSession() {
@@ -185,21 +185,21 @@ export default function WorkoutSessionScreen() {
       router.replace('/(tabs)/workouts');
     } catch (error) {
       const message = getErrorMessage(error, 'Could not discard session.');
-      Alert.alert('Could not discard session', message);
+      notify('Could not discard session', message);
     } finally {
       setDiscarding(false);
     }
   }
 
-  function confirmEndWorkout() {
-    Alert.alert(
-      'End workout?',
-      'Your session will be saved. You can edit it later from Workouts.',
-      [
-        { text: 'Keep going', style: 'cancel' },
-        { text: 'End workout', style: 'destructive', onPress: handleEndWorkout },
-      ],
-    );
+  async function confirmEndWorkout() {
+    const confirmed = await confirmAsync({
+      title: 'End workout?',
+      message: 'Your session will be saved. You can edit it later from Workouts.',
+      confirmText: 'End workout',
+      cancelText: 'Keep going',
+      destructive: true,
+    });
+    if (confirmed) await handleEndWorkout();
   }
 
   async function handleEndWorkout() {
@@ -214,7 +214,7 @@ export default function WorkoutSessionScreen() {
       router.replace('/(tabs)/workouts');
     } catch (error) {
       const message = getErrorMessage(error, 'Could not end workout.');
-      Alert.alert('Could not end workout', message);
+      notify('Could not end workout', message);
     } finally {
       setEnding(false);
     }
@@ -281,7 +281,7 @@ export default function WorkoutSessionScreen() {
         <Pressable
           style={ending ? styles.disabled : undefined}
           disabled={ending}
-          onPress={confirmEndWorkout}
+          onPress={() => void confirmEndWorkout()}
           accessibilityRole="button"
           accessibilityLabel="End workout"
         >
@@ -309,7 +309,7 @@ export default function WorkoutSessionScreen() {
           header={<SessionTimer title={workoutTitle} startedAt={startedAt} />}
           secondaryAction={{
             label: 'Discard session',
-            onPress: confirmDiscardSession,
+            onPress: () => void confirmDiscardSession(),
             loading: discarding,
             accessibilityLabel: 'Discard session',
           }}

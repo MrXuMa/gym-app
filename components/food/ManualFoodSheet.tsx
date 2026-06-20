@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -13,6 +12,7 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { notify } from '@/lib/platformAlert';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MealPicker } from '@/components/food/MealPicker';
 import { MacroSummary } from '@/components/food/MacroSummary';
@@ -129,7 +129,7 @@ export function ManualFoodSheet({ visible, dateKey, initialMeal, onClose, onSave
       setGrams(String(detail.default_grams));
       setStep('confirm');
     } catch (err: unknown) {
-      Alert.alert('Error', err instanceof Error ? err.message : 'Could not load food details');
+      notify('Error', err instanceof Error ? err.message : 'Could not load food details');
     } finally {
       setLoadingDetail(false);
     }
@@ -137,7 +137,7 @@ export function ManualFoodSheet({ visible, dateKey, initialMeal, onClose, onSave
 
   async function handleSave() {
     if (!selected || portionGrams <= 0) {
-      Alert.alert('Invalid portion', 'Enter a portion size in grams.');
+      notify('Invalid portion', 'Enter a portion size in grams.');
       return;
     }
     if (!previewMacros) return;
@@ -158,7 +158,7 @@ export function ManualFoodSheet({ visible, dateKey, initialMeal, onClose, onSave
       onSaved();
       onClose();
     } catch (err: unknown) {
-      Alert.alert('Error', err instanceof Error ? err.message : 'Could not save food');
+      notify('Error', err instanceof Error ? err.message : 'Could not save food');
     } finally {
       setSaving(false);
     }

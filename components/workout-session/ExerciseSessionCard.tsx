@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Keyboard, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Keyboard, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { getErrorMessage } from '@/lib/userFacingError';
+import { confirmAsync, notify } from '@/lib/platformAlert';
 import {
   addWorkoutSet,
   deleteExerciseSet,
@@ -109,22 +110,21 @@ function WorkoutBlockHeader({
   onDeleteSet: () => void;
   onRemoveBlock: () => void;
 }) {
-  function confirmRemoveBlock() {
-    Alert.alert(
-      'Remove workout block?',
-      `Remove "${exercise.name}" and all logged sets from this session?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Remove', style: 'destructive', onPress: onRemoveBlock },
-      ],
-    );
+  async function confirmRemoveBlock() {
+    const confirmed = await confirmAsync({
+      title: 'Remove workout block?',
+      message: `Remove "${exercise.name}" and all logged sets from this session?`,
+      confirmText: 'Remove',
+      destructive: true,
+    });
+    if (confirmed) onRemoveBlock();
   }
 
   return (
     <View style={styles.header}>
       <Pressable
         style={styles.blockRemoveButton}
-        onPress={confirmRemoveBlock}
+        onPress={() => void confirmRemoveBlock()}
         disabled={removing}
         hitSlop={8}
         accessibilityRole="button"
@@ -285,21 +285,18 @@ export function ExerciseSessionCard({
     onDockedEditorChange(null);
   }, [onDockedEditorChange, onEditingExerciseIdChange]);
 
-  function confirmDeleteSelectedSet() {
+  async function confirmDeleteSelectedSet() {
     if (!selectedSet) {
       return;
     }
 
-    Alert.alert('Delete set?', `Remove set ${selectedDisplayNumber} from this block?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: () => {
-          void handleDeleteSelectedSet();
-        },
-      },
-    ]);
+    const confirmed = await confirmAsync({
+      title: 'Delete set?',
+      message: `Remove set ${selectedDisplayNumber} from this block?`,
+      confirmText: 'Delete',
+      destructive: true,
+    });
+    if (confirmed) await handleDeleteSelectedSet();
   }
 
   async function handleDeleteSelectedSet() {
@@ -339,7 +336,7 @@ export function ExerciseSessionCard({
       finishEditing();
     } catch (error) {
       const message = getErrorMessage(error, 'Could not delete set.');
-      Alert.alert('Could not delete set', message);
+      notify('Could not delete set', message);
     } finally {
       setDeletingSet(false);
     }
@@ -354,12 +351,12 @@ export function ExerciseSessionCard({
     const parsedWeight = parseWeight(editorWeight);
 
     if (parsedReps !== null && (!Number.isFinite(parsedReps) || parsedReps <= 0)) {
-      Alert.alert('Invalid reps', 'Reps must be empty or a positive whole number.');
+      notify('Invalid reps', 'Reps must be empty or a positive whole number.');
       return;
     }
 
     if (parsedWeight !== null && (!Number.isFinite(parsedWeight) || parsedWeight < 0)) {
-      Alert.alert('Invalid weight', 'Weight must be empty or a non-negative number.');
+      notify('Invalid weight', 'Weight must be empty or a non-negative number.');
       return;
     }
 
@@ -407,7 +404,7 @@ export function ExerciseSessionCard({
       finishEditing();
     } catch (error) {
       const message = getErrorMessage(error, 'Could not save set.');
-      Alert.alert('Could not save set', message);
+      notify('Could not save set', message);
       setSaving(false);
     }
   }, [
@@ -497,7 +494,7 @@ export function ExerciseSessionCard({
         canDeleteSet={canDeleteSet}
         deletingSet={deletingSet}
         onAddSet={addDraftSet}
-        onDeleteSet={confirmDeleteSelectedSet}
+        onDeleteSet={() => void confirmDeleteSelectedSet()}
         onRemoveBlock={onRemove}
       />
 
